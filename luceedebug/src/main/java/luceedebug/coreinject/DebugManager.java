@@ -35,6 +35,7 @@ import luceedebug.IDebugManager;
 import luceedebug.coreinject.frame.DebugFrame;
 import luceedebug.coreinject.frame.Frame;
 import luceedebug.coreinject.frame.Frame.FrameContext;
+import luceedebug.coreinject.frame.NativeDebugFrame;
 
 public class DebugManager implements IDebugManager {
 
@@ -500,10 +501,30 @@ public class DebugManager implements IDebugManager {
 
     synchronized public IDebugFrame[] getCfStack(Thread thread) {
         ArrayList<DebugFrame> stack = cfStackByThread.get(thread);
-        if (stack == null) {
-            System.out.println("getCfStack called, frames was null, frames is " + cfStackByThread + ", passed thread was " + thread);
-            System.out.println("                   thread=" + thread + " this=" + this);
-            return new Frame[0];
+
+        // If no instrumented frames, try native Lucee7 frames
+        if (stack == null || stack.isEmpty()) {
+            // Try our tracked PageContext first
+            WeakReference<PageContext> pcRef = pageContextByThread.get(thread);
+            PageContext pc = pcRef != null ? pcRef.get() : null;
+
+            // Fall back to ThreadLocalPageContext if we're on the same thread
+            if (pc == null && thread == Thread.currentThread()) {
+                pc = lucee.runtime.engine.ThreadLocalPageContext.get();
+            }
+
+            if (pc != null) {
+                IDebugFrame[] nativeFrames = NativeDebugFrame.getNativeFrames(pc, valTracker);
+                if (nativeFrames != null && nativeFrames.length > 0) {
+                    return nativeFrames;
+                }
+            }
+
+            if (stack == null) {
+                System.out.println("getCfStack called, frames was null, frames is " + cfStackByThread + ", passed thread was " + thread);
+                System.out.println("                   thread=" + thread + " this=" + this);
+                return new Frame[0];
+            }
         }
 
         ArrayList<DebugFrame> result = new ArrayList<>();
@@ -564,6 +585,7 @@ public class DebugManager implements IDebugManager {
                 // fallthrough
             case CfStepRequest.STEP_OUT: {
                 stepRequestByThread.put(thread, new CfStepRequest(frame.getDepth(), type));
+                hasAnyStepRequests = true;
                 return;
             }
             default: {
@@ -577,12 +599,20 @@ public class DebugManager implements IDebugManager {
     // This holds strongrefs to Thread objects, but requests should be cleared out after their completion
     // It doesn't make sense to have a step request for thread that would otherwise be reclaimable but for our reference to it here
     private ConcurrentHashMap<Thread, CfStepRequest> stepRequestByThread = new ConcurrentHashMap<>();
+    // Fast-path flag: volatile read is cheaper than ConcurrentHashMap.isEmpty() or .get()
+    private volatile boolean hasAnyStepRequests = false;
 
     public void clearStepRequest(Thread thread) {
         stepRequestByThread.remove(thread);
+        hasAnyStepRequests = !stepRequestByThread.isEmpty();
     }
 
     public void luceedebug_stepNotificationEntry_step(int lineNumber) {
+        // Fast path: single volatile read when not stepping (99.9% of the time)
+        if (!hasAnyStepRequests) {
+            return;
+        }
+
         final int minDistanceToLuceedebugStepNotificationEntryFrame = 0;
         Thread currentThread = Thread.currentThread();
         DebugFrame frame = maybeUpdateTopmostFrame(currentThread, lineNumber); // should be "definite update topmost frame", we 100% expect there to be a frame
@@ -606,10 +636,15 @@ public class DebugManager implements IDebugManager {
      * So we want the debugger to return to the callsite in the normal case, but jump to any catch/finally blocks in the exceptional case.
      */
     public void luceedebug_stepNotificationEntry_stepAfterCompletedUdfCall() {
+        // Fast path: single volatile read when not stepping (99.9% of the time)
+        if (!hasAnyStepRequests) {
+            return;
+        }
+
         final int minDistanceToLuceedebugStepNotificationEntryFrame = 0;
 
         Thread currentThread = Thread.currentThread();
-        DebugFrame frame = getTopmostFrame(Thread.currentThread());
+        DebugFrame frame = getTopmostFrame(currentThread);
 
         if (frame == null) {
             // just popped last frame?

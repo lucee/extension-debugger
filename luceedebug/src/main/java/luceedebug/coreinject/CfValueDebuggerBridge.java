@@ -42,6 +42,16 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         this.id = frame.valTracker.idempotentRegisterObject(obj).id;
     }
 
+    /**
+     * Constructor for use with native Lucee7 debugger frames where we don't have a Frame object.
+     * The frame field will be null - this is OK since it's not used after construction.
+     */
+    public CfValueDebuggerBridge(ValTracker valTracker, Object obj) {
+        this.frame = null; // Not available for native frames
+        this.obj = Objects.requireNonNull(obj);
+        this.id = valTracker.idempotentRegisterObject(obj).id;
+    }
+
     public long getID() {
         return id;
     }

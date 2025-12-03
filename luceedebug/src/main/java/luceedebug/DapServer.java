@@ -24,8 +24,6 @@ import org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode;
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
 import org.eclipse.lsp4j.jsonrpc.util.ToStringBuilder;
 
-import com.sun.jdi.ObjectCollectedException;
-
 import luceedebug.strong.CanonicalServerAbsPath;
 import luceedebug.strong.RawIdePath;
 
@@ -72,16 +70,16 @@ public class DapServer implements IDebugProtocolServer {
         this.luceeVm_ = luceeVm;
         this.config_ = config;
 
-        this.luceeVm_.registerStepEventCallback(jdwpThreadID -> {
-            final var i32_threadID = (int)(long)jdwpThreadID.get();
+        this.luceeVm_.registerStepEventCallback(threadID -> {
+            final var i32_threadID = (int)(long)threadID;
             var event = new StoppedEventArguments();
             event.setReason("step");
             event.setThreadId(i32_threadID);
             clientProxy_.stopped(event);
         });
 
-        this.luceeVm_.registerBreakpointEventCallback((jdwpThreadID, bpID) -> {
-            final int i32_threadID = (int)(long)jdwpThreadID.get();
+        this.luceeVm_.registerBreakpointEventCallback((threadID, bpID) -> {
+            final int i32_threadID = (int)(long)threadID;
             var event = new StoppedEventArguments();
             event.setReason("breakpoint");
             event.setThreadId(i32_threadID);
@@ -112,6 +110,23 @@ public class DapServer implements IDebugProtocolServer {
                 bpEvent.setReason("removed");
                 clientProxy_.breakpoint(bpEvent);
             }
+        });
+
+        // Register native breakpoint callback (Lucee7+ native suspend)
+        // Uses Java thread ID directly since native suspend doesn't go through JDWP
+        this.luceeVm_.registerNativeBreakpointEventCallback((javaThreadId, label) -> {
+            // Use Java thread ID directly as DAP thread ID for native breakpoints
+            // This is different from JDWP breakpoints which use JDWP thread IDs
+            final int i32_threadID = (int)(long)javaThreadId;
+            var event = new StoppedEventArguments();
+            event.setReason("breakpoint");
+            event.setThreadId(i32_threadID);
+            // Set label as description if provided (from programmatic breakpoint("label") calls)
+            if (label != null && !label.isEmpty()) {
+                event.setDescription(label);
+            }
+            clientProxy_.stopped(event);
+            System.out.println("[luceedebug] Sent DAP stopped event for native breakpoint, thread=" + javaThreadId + (label != null ? " label=" + label : ""));
         });
     }
 
@@ -262,22 +277,11 @@ public class DapServer implements IDebugProtocolServer {
     public CompletableFuture<ThreadsResponse> threads() {
         var lspThreads = new ArrayList<org.eclipse.lsp4j.debug.Thread>();
 
-        for (var threadRef : luceeVm_.getThreadListing()) {
-            try {
-                var lspThread = new org.eclipse.lsp4j.debug.Thread();
-                lspThread.setId((int)threadRef.uniqueID()); // <<<<----------------@fixme, ObjectCollectedExceptions here
-                lspThread.setName(threadRef.name()); // <<<<----------------@fixme, ObjectCollectedExceptions here
-                lspThreads.add(lspThread);
-            }
-            catch (ObjectCollectedException e) {
-                // Discard this exception.
-                // We really shouldn't be dealing in terms of jdi thread refs here.
-                // The luceevm should return a list of names and IDs rather than actual threadrefs.
-            }
-            catch (Throwable e) {
-                e.printStackTrace();
-                System.exit(1);
-            }
+        for (var threadInfo : luceeVm_.getThreadListing()) {
+            var lspThread = new org.eclipse.lsp4j.debug.Thread();
+            lspThread.setId((int)threadInfo.id);
+            lspThread.setName(threadInfo.name);
+            lspThreads.add(lspThread);
         }
         
         // a lot of thread names like "Thread-Foo-1" and "Thread-Foo-12" which we'd like to order in a nice way

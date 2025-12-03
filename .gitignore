@@ -10,3 +10,6 @@ build
 .bloop
 generated/
 test/scratch
+/profiling/output
+/test-output
+/profiling/test-output

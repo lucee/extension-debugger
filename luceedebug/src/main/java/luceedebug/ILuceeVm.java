@@ -3,16 +3,30 @@ package luceedebug;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
-import com.sun.jdi.*;
-
 import luceedebug.strong.DapBreakpointID;
-import luceedebug.strong.JdwpThreadID;
 import luceedebug.strong.CanonicalServerAbsPath;
 import luceedebug.strong.RawIdePath;
 
 public interface ILuceeVm {
-    public void registerStepEventCallback(Consumer<JdwpThreadID> cb);
-    public void registerBreakpointEventCallback(BiConsumer<JdwpThreadID, DapBreakpointID> cb);
+    /**
+     * Register callback for step events.
+     * Called with thread ID when a step completes.
+     */
+    public void registerStepEventCallback(Consumer<Long> cb);
+
+    /**
+     * Register callback for JDWP breakpoint events.
+     * Called with thread ID and breakpoint ID when a JDWP breakpoint is hit.
+     * For NativeLuceeVm, this is unused (use registerNativeBreakpointEventCallback instead).
+     */
+    public void registerBreakpointEventCallback(BiConsumer<Long, DapBreakpointID> cb);
+
+    /**
+     * Register callback for native breakpoint events (Lucee7+).
+     * Called with Java thread ID and optional label when a thread hits a native breakpoint.
+     * Label is non-null for programmatic breakpoint("label") calls, null otherwise.
+     */
+    public void registerNativeBreakpointEventCallback(BiConsumer<Long, String> cb);
 
     public static class BreakpointsChangedEvent {
         IBreakpoint[] newBreakpoints = new IBreakpoint[0];
@@ -27,8 +41,8 @@ public interface ILuceeVm {
     }
     public void registerBreakpointsChangedCallback(Consumer<BreakpointsChangedEvent> cb);
 
-    public ThreadReference[] getThreadListing();
-    public IDebugFrame[] getStackTrace(long jdwpThreadID);
+    public ThreadInfo[] getThreadListing();
+    public IDebugFrame[] getStackTrace(long threadID);
     public IDebugEntity[] getScopes(long frameID);
 
     /**
@@ -44,13 +58,13 @@ public interface ILuceeVm {
 
     public IBreakpoint[] bindBreakpoints(RawIdePath idePath, CanonicalServerAbsPath serverAbsPath, int[] lines, String[] exprs);
 
-    public void continue_(long jdwpThreadID);
+    public void continue_(long threadID);
 
     public void continueAll();
 
-    public void stepIn(long jdwpThreadID);
-    public void stepOver(long jdwpThreadID);
-    public void stepOut(long jdwpThreadID);
+    public void stepIn(long threadID);
+    public void stepOver(long threadID);
+    public void stepOut(long threadID);
 
 
     public void clearAllBreakpoints();

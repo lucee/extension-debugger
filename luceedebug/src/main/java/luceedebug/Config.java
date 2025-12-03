@@ -8,7 +8,7 @@ public class Config {
     // but for now it's configurable
     private boolean stepIntoUdfDefaultValueInitFrames_ = false;
 
-    Config(boolean fsIsCaseSensitive) {
+    public Config(boolean fsIsCaseSensitive) {
         this.fsIsCaseSensitive_ = fsIsCaseSensitive;
     }
 

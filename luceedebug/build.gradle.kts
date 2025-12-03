@@ -117,3 +117,27 @@ tasks.shadowJar {
     relocationPrefix = "luceedebug_shadow"
     archiveFileName.set(libfile)
 }
+
+// Extension packaging task - creates .lex file for Lucee extension deployment
+val extensionVersion = "3.0.0"
+val extensionFile = "luceedebug-extension-${extensionVersion}.lex"
+
+tasks.register<Zip>("buildExtension") {
+    dependsOn("shadowJar")
+    archiveFileName.set(extensionFile)
+    destinationDirectory.set(file("${layout.buildDirectory.get()}/extension"))
+
+    // Include the shadow JAR as the main library
+    from(tasks.shadowJar.get().outputs) {
+        into("jars")
+    }
+
+    // Include the extension manifest
+    from("${rootProject.projectDir}/extension/META-INF") {
+        into("META-INF")
+    }
+
+    doLast {
+        println("Built extension: ${destinationDirectory.get()}/${extensionFile}")
+    }
+}
