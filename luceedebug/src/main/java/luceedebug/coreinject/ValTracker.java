@@ -22,7 +22,8 @@ public class ValTracker {
     private final Map<Long, WeakTaggedObject> wrapperByID = new ConcurrentHashMap<>();
 
     private static class WeakTaggedObject {
-        private static final AtomicLong nextId = new AtomicLong();
+        // Start at 1, not 0 - DAP uses variablesReference=0 to mean "no children"
+        private static final AtomicLong nextId = new AtomicLong(1);
         public final long id;
         public final WeakReference<Object> wrapped;
         public WeakTaggedObject(Object obj) {

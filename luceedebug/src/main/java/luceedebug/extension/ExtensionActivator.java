@@ -2,12 +2,12 @@ package luceedebug.extension;
 
 import java.lang.reflect.Method;
 
-import lucee.loader.engine.CFMLEngineFactory;
 import lucee.runtime.config.Config;
 
 import luceedebug.DapServer;
+import luceedebug.EnvUtil;
+import luceedebug.Log;
 import luceedebug.coreinject.NativeLuceeVm;
-import luceedebug.coreinject.NativeDebuggerListener;
 
 /**
  * Extension startup hook - instantiated by Lucee when the extension loads.
@@ -24,13 +24,13 @@ public class ExtensionActivator {
 	 * Lucee passes the Config object automatically.
 	 */
 	public ExtensionActivator(Config luceeConfig) {
-		System.out.println("[luceedebug] Extension activating via startup-hook");
+		Log.info("Extension activating via startup-hook");
 
 		// Get debug port from environment - if not set, debugger is disabled
-		int debugPort = getDebuggerPort();
+		int debugPort = EnvUtil.getDebuggerPort();
 		if (debugPort < 0) {
-			System.out.println("[luceedebug] Debugger not enabled");
-			System.out.println("[luceedebug] Set LUCEE_DEBUGGER_PORT=<port> to enable");
+			Log.info("Debugger not enabled");
+			Log.info("Set LUCEE_DEBUGGER_PORT=<port> to enable");
 			return;
 		}
 
@@ -38,9 +38,16 @@ public class ExtensionActivator {
 		ClassLoader extensionLoader = this.getClass().getClassLoader();
 		ClassLoader luceeLoader = luceeConfig.getClass().getClassLoader();
 
+		// Log execution logging status - this determines if breakpoints work
+		if (EnvUtil.isDebuggerEnabled()) {
+			Log.info("Execution logging: ENABLED (LUCEE_DEBUGGER_ENABLED=true)");
+		} else {
+			Log.info("Execution logging: DISABLED (set LUCEE_DEBUGGER_ENABLED=true to enable breakpoints)");
+		}
+
 		// Register debugger listener with Lucee's DebuggerRegistry
 		if (!registerNativeDebuggerListener(luceeLoader, extensionLoader)) {
-			System.out.println("[luceedebug] Failed to register debugger listener - extension disabled");
+			Log.error("Failed to register debugger listener - extension disabled");
 			return;
 		}
 
@@ -51,6 +58,9 @@ public class ExtensionActivator {
 		// Create luceedebug config
 		luceedebug.Config config = new luceedebug.Config(fsCaseSensitive);
 
+		// Set Lucee classloader for reflection access to core classes
+		NativeLuceeVm.setLuceeClassLoader(luceeLoader);
+
 		// Create NativeLuceeVm
 		luceeVm = new NativeLuceeVm(config);
 
@@ -60,7 +70,87 @@ public class ExtensionActivator {
 			DapServer.createForSocket(luceeVm, config, "localhost", port);
 		}, "luceedebug-dap-server").start();
 
-		System.out.println("[luceedebug] DAP server starting on localhost:" + debugPort);
+		Log.info("DAP server starting on localhost:" + debugPort);
+	}
+
+	/**
+	 * Enable DebuggerExecutionLog via ConfigAdmin.
+	 * This triggers template recompilation with exeLogStart()/exeLogEnd() bytecode
+	 * which calls DebuggerRegistry.shouldSuspend() on each line.
+	 *
+	 * Note: During startup-hook, we receive ConfigServer (not ConfigWeb).
+	 * We need to find a ConfigAdmin.newInstance() method that works with ConfigServer.
+	 */
+	private void enableDebuggerExecutionLog(Config luceeConfig, ClassLoader luceeLoader) {
+		try {
+			// Load ConfigAdmin class from Lucee core
+			Class<?> configAdminClass = luceeLoader.loadClass("lucee.runtime.config.ConfigAdmin");
+			Class<?> classDefClass = luceeLoader.loadClass("lucee.runtime.db.ClassDefinition");
+			Class<?> classDefImplClass = luceeLoader.loadClass("lucee.transformer.library.ClassDefinitionImpl");
+			Class<?> structClass = luceeLoader.loadClass("lucee.runtime.type.Struct");
+			Class<?> structImplClass = luceeLoader.loadClass("lucee.runtime.type.StructImpl");
+
+			// Find the right newInstance method - try different signatures
+			Object configAdmin = null;
+
+			// Try to find a method that accepts our config type
+			for (Method m : configAdminClass.getMethods()) {
+				if (m.getName().equals("newInstance") && m.getParameterCount() >= 2) {
+					Class<?>[] params = m.getParameterTypes();
+					// Look for (Config/ConfigServer, String/Password, boolean) or similar
+					if (params[0].isAssignableFrom(luceeConfig.getClass())) {
+						try {
+							if (params.length == 2) {
+								// (Config, Password)
+								configAdmin = m.invoke(null, luceeConfig, null);
+							} else if (params.length == 3 && params[2] == boolean.class) {
+								// (Config, Password, optionalPW)
+								configAdmin = m.invoke(null, luceeConfig, null, true);
+							}
+							if (configAdmin != null) {
+								Log.info("Created ConfigAdmin using " + m);
+								break;
+							}
+						} catch (Exception e) {
+							// Try next method
+						}
+					}
+				}
+			}
+
+			if (configAdmin == null) {
+				Log.error("Could not create ConfigAdmin - no compatible newInstance method found");
+				Log.info("Available newInstance methods:");
+				for (Method m : configAdminClass.getMethods()) {
+					if (m.getName().equals("newInstance")) {
+						Log.info("  " + m);
+					}
+				}
+				return;
+			}
+
+			// Create ClassDefinition for DebuggerExecutionLog
+			java.lang.reflect.Constructor<?> cdConstructor = classDefImplClass.getConstructor(String.class);
+			Object classDefinition = cdConstructor.newInstance("lucee.runtime.engine.DebuggerExecutionLog");
+
+			// Create empty Struct for arguments
+			Object emptyStruct = structImplClass.getConstructor().newInstance();
+
+			// admin.updateExecutionLog(classDefinition, arguments, enabled=true)
+			Method updateMethod = configAdminClass.getMethod("updateExecutionLog",
+				classDefClass, structClass, boolean.class);
+			updateMethod.invoke(configAdmin, classDefinition, emptyStruct, true);
+
+			// Persist and reload config - this triggers template recompilation
+			Method storeMethod = configAdminClass.getMethod("storeAndReload");
+			storeMethod.invoke(configAdmin);
+
+			Log.info("Enabled DebuggerExecutionLog - templates will recompile with debugger bytecode");
+		} catch (ClassNotFoundException e) {
+			Log.error("ConfigAdmin not found - cannot enable execution log: " + e.getMessage());
+		} catch (Throwable e) {
+			Log.error("Failed to enable execution log", e);
+		}
 	}
 
 	/**
@@ -85,6 +175,9 @@ public class ExtensionActivator {
 			final Method onResumeMethod = nativeListenerClass.getMethod("onResume", pageContextClass);
 			final Method shouldSuspendMethod = nativeListenerClass.getMethod("shouldSuspend",
 				pageContextClass, String.class, int.class);
+			final Method isDapClientConnectedMethod = nativeListenerClass.getMethod("isDapClientConnected");
+			final Method onExceptionMethod = nativeListenerClass.getMethod("onException",
+				pageContextClass, Throwable.class, boolean.class);
 
 			// Create proxy in Lucee's classloader, delegating to extension's implementation
 			Object listenerProxy = java.lang.reflect.Proxy.newProxyInstance(
@@ -92,10 +185,12 @@ public class ExtensionActivator {
 				new Class<?>[] { listenerInterface },
 				(proxy, method, args) -> {
 					switch (method.getName()) {
+						case "isActive": return isDapClientConnectedMethod.invoke(null);
 						case "onSuspend": return onSuspendMethod.invoke(null, args);
 						case "onResume": return onResumeMethod.invoke(null, args);
 						case "shouldSuspend": return shouldSuspendMethod.invoke(null, args);
-						default: throw new UnsupportedOperationException("Unknown method: " + method.getName());
+						case "onException": return onExceptionMethod.invoke(null, args);
+						default: return null; // Default methods like onException have defaults
 					}
 				}
 			);
@@ -104,43 +199,23 @@ public class ExtensionActivator {
 			Method setListener = registryClass.getMethod("setListener", listenerInterface);
 			setListener.invoke(null, listenerProxy);
 
-			System.out.println("[luceedebug] Registered native debugger listener");
+			Log.info("Registered native debugger listener");
 			return true;
 		} catch (ClassNotFoundException e) {
-			System.out.println("[luceedebug] DebuggerRegistry not found - requires Lucee 7.1+");
+			Log.info("DebuggerRegistry not found - requires Lucee 7.1+");
 			return false;
 		} catch (Throwable e) {
-			System.out.println("[luceedebug] Failed to register listener: " + e.getMessage());
-			e.printStackTrace();
+			Log.error("Failed to register listener", e);
 			return false;
 		}
 	}
 
 	/**
-	 * Get debugger port from environment/system property.
-	 * Returns -1 if not set (debugger disabled).
+	 * Called by Lucee when the extension is uninstalled or updated.
+	 * Shuts down the DAP server to free the port.
 	 */
-	private static int getDebuggerPort() {
-		String port = getSystemPropOrEnvVar("lucee.debugger.port");
-		if (port == null || port.isEmpty()) {
-			return -1; // disabled
-		}
-		return CFMLEngineFactory.getInstance().getCastUtil().toIntValue(port, -1);
-	}
-
-	/**
-	 * Get system property or environment variable.
-	 * System property takes precedence. Env var name is derived from property name
-	 * by uppercasing and replacing dots with underscores.
-	 */
-	private static String getSystemPropOrEnvVar(String propertyName) {
-		// Try system property first
-		String value = System.getProperty(propertyName);
-		if (value != null && !value.isEmpty()) {
-			return value;
-		}
-		// Try env var (lucee.debugger.port -> LUCEE_DEBUGGER_PORT)
-		String envName = propertyName.toUpperCase().replace('.', '_');
-		return System.getenv(envName);
+	public void finalize() {
+		Log.info("Extension finalizing - shutting down DAP server");
+		DapServer.shutdown();
 	}
 }

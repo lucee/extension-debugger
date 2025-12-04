@@ -11,7 +11,6 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 
 import lucee.runtime.Component;
-import lucee.runtime.exp.PageException;
 import lucee.runtime.type.Array;
 import luceedebug.ICfValueDebuggerBridge;
 import luceedebug.IDebugEntity;
@@ -104,6 +103,40 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
     }
 
     private static Comparator<IDebugEntity> xscopeByName = Comparator.comparing((IDebugEntity v) -> v.getName().toLowerCase());
+
+    /**
+     * Check if an object is a "noisy" component function that should be hidden in debug output.
+     * Uses class name comparison to avoid ClassNotFoundException in OSGi extension mode.
+     */
+    private static boolean isNoisyComponentFunction(Object obj) {
+        String className = obj.getClass().getName();
+        // Discard UDFGetterProperty, UDFSetterProperty, UDFImpl (noisy)
+        // But retain Lambda and Closure (useful)
+        boolean isNoisyUdf = className.equals("lucee.runtime.type.UDFGetterProperty")
+            || className.equals("lucee.runtime.type.UDFSetterProperty")
+            || className.equals("lucee.runtime.type.UDFImpl");
+        boolean isLambdaOrClosure = className.equals("lucee.runtime.type.Lambda")
+            || className.equals("lucee.runtime.type.Closure");
+        return isNoisyUdf && !isLambdaOrClosure;
+    }
+
+    /**
+     * Check class by name to avoid ClassNotFoundException in OSGi extension mode.
+     * Some Lucee core classes aren't visible to the extension classloader.
+     */
+    private static boolean isInstanceOf(Object obj, String className) {
+        if (obj == null) return false;
+        Class<?> clazz = obj.getClass();
+        while (clazz != null) {
+            if (clazz.getName().equals(className)) return true;
+            // Check interfaces
+            for (Class<?> iface : clazz.getInterfaces()) {
+                if (iface.getName().equals(className)) return true;
+            }
+            clazz = clazz.getSuperclass();
+        }
+        return false;
+    }
 
     private static IDebugEntity[] getAsMaplike(ValTracker valTracker, Map<String, Object> map) {
         ArrayList<IDebugEntity> results = new ArrayList<>();
@@ -199,7 +232,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
                 // retain the lambbda/closure types
                 var lambda = () => {} // lucee.runtime.type.Lambda
                 var closure = function() {} // lucee.runtime.type.Closure
-                
+
                 // discard component function types, they're mostly noise in debug output
                 component accessors=true {
                     property name="foo"; // lucee.runtime.type.UDFGetterProperty / lucee.runtime.type.UDFSetterProperty
@@ -207,29 +240,26 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
                 }
             */
             skipNoisyComponentFunctions
-            && (obj instanceof lucee.runtime.type.UDFGetterProperty
-                || obj instanceof lucee.runtime.type.UDFSetterProperty
-                || obj instanceof lucee.runtime.type.UDFImpl)
-            && !(
-                obj instanceof lucee.runtime.type.Lambda
-                || obj instanceof lucee.runtime.type.Closure
-            )
+            && isNoisyComponentFunction(obj)
         ) {
             return null;
         }
-        else if (obj instanceof lucee.runtime.type.QueryImpl) {
+        else if (isInstanceOf(obj, "lucee.runtime.type.QueryImpl")) {
+            // Handle Query - use reflection to avoid ClassNotFoundException in OSGi
             try {
-                lucee.runtime.type.query.QueryArray queryAsArrayOfStructs = lucee.runtime.type.query.QueryArray.toQueryArray((lucee.runtime.type.QueryImpl)obj);
-                val.value = "Query (" + queryAsArrayOfStructs.size() + " rows)";
-                
+                java.lang.reflect.Method toQueryArrayMethod = Class.forName("lucee.runtime.type.query.QueryArray", true, obj.getClass().getClassLoader())
+                    .getMethod("toQueryArray", Class.forName("lucee.runtime.type.QueryImpl", true, obj.getClass().getClassLoader()));
+                Object queryAsArrayOfStructs = toQueryArrayMethod.invoke(null, obj);
+                java.lang.reflect.Method sizeMethod = queryAsArrayOfStructs.getClass().getMethod("size");
+                int size = (int) sizeMethod.invoke(queryAsArrayOfStructs);
+                val.value = "Query (" + size + " rows)";
+
                 pin(queryAsArrayOfStructs);
 
                 val.variablesReference = valTracker.idempotentRegisterObject(queryAsArrayOfStructs).id;
             }
-            catch (PageException e) {
-                //
-                // duplicative w/ catch-all else block
-                //
+            catch (Throwable e) {
+                // Fall back to generic display
                 try {
                     val.value = obj.getClass().toString();
                     val.variablesReference = valTracker.idempotentRegisterObject(obj).id;
@@ -282,7 +312,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
     }
 
     public int getIndexedVariablesCount() {
-        if (obj instanceof lucee.runtime.type.scope.Argument) {
+        if (isInstanceOf(obj, "lucee.runtime.type.scope.Argument")) {
             // `arguments` scope is both an Array and a Map, which represents the possiblity that a function is called with named args or positional args.
             // It seems like saner default behavior to report it only as having named variables, and zero indexed variables.
             return 0;
@@ -302,11 +332,33 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         if (obj instanceof Component) {
             return ((Component)obj).getPageSource().getPhyscalFile().getAbsolutePath();
         }
-        else if (obj instanceof lucee.runtime.type.UDFImpl) {
-            return ((lucee.runtime.type.UDFImpl)obj).properties.getPageSource().getPhyscalFile().getAbsolutePath();
+        else if (isInstanceOf(obj, "lucee.runtime.type.UDFImpl")) {
+            // Use reflection to avoid ClassNotFoundException in OSGi
+            try {
+                java.lang.reflect.Field propsField = obj.getClass().getField("properties");
+                Object props = propsField.get(obj);
+                java.lang.reflect.Method getPageSourceMethod = props.getClass().getMethod("getPageSource");
+                Object pageSource = getPageSourceMethod.invoke(props);
+                java.lang.reflect.Method getPhyscalFileMethod = pageSource.getClass().getMethod("getPhyscalFile");
+                Object file = getPhyscalFileMethod.invoke(pageSource);
+                java.lang.reflect.Method getAbsolutePathMethod = file.getClass().getMethod("getAbsolutePath");
+                return (String) getAbsolutePathMethod.invoke(file);
+            } catch (Throwable e) {
+                return null;
+            }
         }
-        else if (obj instanceof lucee.runtime.type.UDFGSProperty) {
-            return ((lucee.runtime.type.UDFGSProperty)obj).getPageSource().getPhyscalFile().getAbsolutePath();
+        else if (isInstanceOf(obj, "lucee.runtime.type.UDFGSProperty")) {
+            // Use reflection to avoid ClassNotFoundException in OSGi
+            try {
+                java.lang.reflect.Method getPageSourceMethod = obj.getClass().getMethod("getPageSource");
+                Object pageSource = getPageSourceMethod.invoke(obj);
+                java.lang.reflect.Method getPhyscalFileMethod = pageSource.getClass().getMethod("getPhyscalFile");
+                Object file = getPhyscalFileMethod.invoke(pageSource);
+                java.lang.reflect.Method getAbsolutePathMethod = file.getClass().getMethod("getAbsolutePath");
+                return (String) getAbsolutePathMethod.invoke(file);
+            } catch (Throwable e) {
+                return null;
+            }
         }
         else {
             return null;

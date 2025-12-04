@@ -35,14 +35,14 @@ component {
 		variables.socket.setSoTimeout( 100 ); // 100ms read timeout for polling
 		variables.inputStream = variables.socket.getInputStream();
 		variables.outputStream = variables.socket.getOutputStream();
-		log( "Connected to #arguments.host#:#arguments.port#" );
+		debugLog( "Connected to #arguments.host#:#arguments.port#" );
 	}
 
 	public function disconnect() {
 		if ( !isNull( variables.socket ) ) {
 			variables.socket.close();
 			variables.socket = javacast( "null", 0 );
-			log( "Disconnected" );
+			debugLog( "Disconnected" );
 		}
 	}
 
@@ -195,14 +195,14 @@ component {
 
 	private struct function sendRequest( required string command, required struct args ) {
 		var requestSeq = ++variables.seq;
-		var request = {
+		var dapRequest = {
 			"seq": requestSeq,
 			"type": "request",
 			"command": arguments.command,
 			"arguments": arguments.args
 		};
 
-		sendMessage( request );
+		sendMessage( dapRequest );
 
 		// Wait for response with matching request_seq
 		var startTime = getTickCount();
@@ -231,9 +231,10 @@ component {
 	private void function sendMessage( required struct message ) {
 		var json = serializeJSON( arguments.message );
 		var bytes = json.getBytes( "UTF-8" );
-		var header = "Content-Length: #bytes.length#\r\n\r\n";
+		var CRLF = chr( 13 ) & chr( 10 );
+		var header = "Content-Length: #arrayLen( bytes )#" & CRLF & CRLF;
 
-		log( ">>> #json#" );
+		debugLog( ">>> #json#" );
 
 		variables.outputStream.write( header.getBytes( "UTF-8" ) );
 		variables.outputStream.write( bytes );
@@ -290,7 +291,7 @@ component {
 		}
 
 		var json = bodyBytes.toString( "UTF-8" );
-		log( "<<< #json#" );
+		debugLog( "<<< #json#" );
 
 		return deserializeJSON( json );
 	}
@@ -325,11 +326,11 @@ component {
 				variables.eventQueue.append( arguments.message );
 				break;
 			default:
-				log( "Unknown message type: #arguments.message.type#" );
+				debugLog( "Unknown message type: #arguments.message.type#" );
 		}
 	}
 
-	private void function log( required string msg ) {
+	private void function debugLog( required string msg ) {
 		if ( variables.debug ) {
 			systemOutput( "[DapClient] #arguments.msg#", true );
 		}

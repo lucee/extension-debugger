@@ -24,6 +24,7 @@ import org.eclipse.lsp4j.jsonrpc.messages.ResponseErrorCode;
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
 import org.eclipse.lsp4j.jsonrpc.util.ToStringBuilder;
 
+import luceedebug.coreinject.NativeDebuggerListener;
 import luceedebug.strong.CanonicalServerAbsPath;
 import luceedebug.strong.RawIdePath;
 
@@ -32,10 +33,16 @@ public class DapServer implements IDebugProtocolServer {
     private final Config config_;
     private ArrayList<IPathTransform> pathTransforms = new ArrayList<>();
 
-    // for dev, system.out was fine, in some containers, others totally suppress it and it doesn't even 
+    // for dev, system.out was fine, in some containers, others totally suppress it and it doesn't even
     // end up in log files.
     // this is all jacked up, on runwar builds it spits out two lines per call to `logger.info(...)` message, the first one being [ERROR] which is not right
     private static final Logger logger = Logger.getLogger("luceedebug");
+
+    // Static reference for shutdown within same classloader
+    private static volatile ServerSocket activeServerSocket;
+
+    // System property key for tracking the server socket across classloaders (OSGi bundle reload)
+    private static final String SOCKET_PROPERTY = "luceedebug.dap.serverSocket";
     
     private String applyPathTransformsIdeToCf(String s) {
         for (var transform : pathTransforms) {
@@ -126,7 +133,7 @@ public class DapServer implements IDebugProtocolServer {
                 event.setDescription(label);
             }
             clientProxy_.stopped(event);
-            System.out.println("[luceedebug] Sent DAP stopped event for native breakpoint, thread=" + javaThreadId + (label != null ? " label=" + label : ""));
+            Log.info("Sent DAP stopped event for native breakpoint, thread=" + javaThreadId + (label != null ? " label=" + label : ""));
         });
     }
 
@@ -140,13 +147,39 @@ public class DapServer implements IDebugProtocolServer {
     }
 
     static public DapEntry createForSocket(ILuceeVm luceeVm, Config config, String host, int port) {
-        try (var server = new ServerSocket()) {
+        // Shut down any existing server first (handles extension reinstall within same classloader)
+        shutdown();
+
+        ServerSocket server = null;
+        try {
+            server = new ServerSocket();
             var addr = new InetSocketAddress(host, port);
             server.setReuseAddress(true);
 
             logger.finest("binding cf dap server socket on " + host + ":" + port);
 
-            server.bind(addr);
+            // Try to bind, with retries for port in use (OSGi bundle reload race condition)
+            int maxRetries = 5;
+            java.net.BindException lastBindError = null;
+            for (int attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    server.bind(addr);
+                    lastBindError = null;
+                    break;
+                } catch (java.net.BindException e) {
+                    lastBindError = e;
+                    if (attempt < maxRetries) {
+                        Log.info("Port " + port + " in use, retrying in 1s (attempt " + attempt + "/" + maxRetries + ")");
+                        try { java.lang.Thread.sleep(1000); } catch (InterruptedException ie) { break; }
+                    }
+                }
+            }
+            if (lastBindError != null) {
+                throw lastBindError;
+            }
+            activeServerSocket = server;
+            // Store in system properties so it survives classloader changes (OSGi bundle reload)
+            System.getProperties().put(SOCKET_PROPERTY, server);
 
             logger.finest("dap server socket bind OK");
 
@@ -154,20 +187,109 @@ public class DapServer implements IDebugProtocolServer {
                 logger.finest("listening for inbound debugger connection on " + host + ":" + port + "...");
 
                 var socket = server.accept();
+                var clientAddr = socket.getInetAddress().getHostAddress();
+                var clientPort = socket.getPort();
 
-                logger.finest("accepted debugger connection");
+                Log.info("DAP client connected from " + clientAddr + ":" + clientPort);
+                logger.finest("accepted debugger connection from " + clientAddr + ":" + clientPort);
 
-                var dapEntry = create(luceeVm, config, socket.getInputStream(), socket.getOutputStream());
-                var future = dapEntry.launcher.startListening();
-                future.get(); // block until the connection closes
+                // Mark DAP client as connected - enables breakpoint() BIF to suspend
+                luceedebug.coreinject.NativeDebuggerListener.setDapClientConnected(true);
+
+                try {
+                    Log.info("Creating DAP entry...");
+                    // Wrap streams with logging
+                    var rawIn = socket.getInputStream();
+                    var rawOut = socket.getOutputStream();
+                    var loggingIn = new java.io.FilterInputStream(rawIn) {
+                        @Override
+                        public int read() throws java.io.IOException {
+                            int b = super.read();
+                            if (b >= 0) {
+                                System.out.print((char)b);
+                            }
+                            return b;
+                        }
+                        @Override
+                        public int read(byte[] b, int off, int len) throws java.io.IOException {
+                            int n = super.read(b, off, len);
+                            if (n > 0) {
+                                System.out.print("[IN:" + n + "]" + new String(b, off, n, "UTF-8"));
+                            }
+                            return n;
+                        }
+                    };
+                    var dapEntry = create(luceeVm, config, loggingIn, rawOut);
+                    Log.info("DAP launcher created, starting listening...");
+                    // Enable DAP output for this client
+                    Log.setDapClient(dapEntry.server.clientProxy_);
+                    var future = dapEntry.launcher.startListening();
+                    Log.info("DAP launcher started, waiting for connection to close...");
+                    try {
+                        future.get(); // block until the connection closes
+                    } catch (Exception e) {
+                        Log.error("Launcher future exception", e);
+                    }
+                    Log.info("DAP client disconnected from " + clientAddr + ":" + clientPort);
+                } catch (Exception e) {
+                    Log.error("DAP client error: " + e.getClass().getName(), e);
+                } finally {
+                    // Mark DAP client as disconnected - disables breakpoint() BIF suspension
+                    luceedebug.coreinject.NativeDebuggerListener.setDapClientConnected(false);
+                    Log.setDapClient(null); // Disable DAP output
+                    try { socket.close(); } catch (Exception ignored) {}
+                    Log.info("DAP client socket closed for " + clientAddr + ":" + clientPort);
+                }
 
                 logger.finest("debugger connection closed");
             }
+        }
+        catch (java.net.SocketException e) {
+            // Expected when shutdown() closes the socket
+            Log.info("DAP server socket closed");
+            return null;
         }
         catch (Throwable e) {
             e.printStackTrace();
             System.exit(1);
             return null;
+        }
+        finally {
+            // Only clear if we're still the active server (avoid race with new server starting)
+            if (activeServerSocket == server) {
+                activeServerSocket = null;
+                System.getProperties().remove(SOCKET_PROPERTY);
+            }
+        }
+    }
+
+    /**
+     * Shutdown the DAP server. Called on extension uninstall/reinstall.
+     * Uses System.getProperties() to find socket from previous classloaders.
+     */
+    public static void shutdown() {
+        // Try to get socket from JVM-wide properties (survives classloader changes)
+        Object storedSocket = System.getProperties().get(SOCKET_PROPERTY);
+        if (storedSocket instanceof ServerSocket) {
+            ServerSocket socket = (ServerSocket) storedSocket;
+            Log.info("shutdown() - found socket in system properties, closing...");
+            try {
+                socket.close();
+                Log.info("shutdown() - socket closed");
+            } catch (Exception e) {
+                Log.error("shutdown() - socket close error", e);
+            }
+            System.getProperties().remove(SOCKET_PROPERTY);
+        } else {
+            Log.info("shutdown() - no socket in system properties");
+        }
+
+        // Also close our local static reference if set
+        if (activeServerSocket != null) {
+            try {
+                activeServerSocket.close();
+            } catch (Exception ignored) {}
+            activeServerSocket = null;
         }
     }
 
@@ -180,6 +302,8 @@ public class DapServer implements IDebugProtocolServer {
 
     @Override
     public CompletableFuture<Capabilities> initialize(InitializeRequestArguments args) {
+        Log.info("initialize() called with args: " + args);
+        System.out.println("[luceedebug] INITIALIZE CALLED - this should appear in Tomcat logs");
         var c = new Capabilities();
         c.setSupportsEvaluateForHovers(true);
         c.setSupportsConfigurationDoneRequest(true);
@@ -188,6 +312,14 @@ public class DapServer implements IDebugProtocolServer {
         c.setSupportsConditionalBreakpoints(true);
         c.setSupportsHitConditionalBreakpoints(false); // still shows UI for it though
         c.setSupportsLogPoints(false); // still shows UI for it though
+
+        // Exception breakpoint filters
+        var uncaughtFilter = new ExceptionBreakpointsFilter();
+        uncaughtFilter.setFilter("uncaught");
+        uncaughtFilter.setLabel("Uncaught Exceptions");
+        uncaughtFilter.setDescription("Break when an exception is not caught by a try/catch block");
+        c.setExceptionBreakpointFilters(new ExceptionBreakpointsFilter[] { uncaughtFilter });
+        Log.info("Returning capabilities with exceptionBreakpointFilters: " + java.util.Arrays.toString(c.getExceptionBreakpointFilters()));
 
         return CompletableFuture.completedFuture(c);
     }
@@ -259,12 +391,12 @@ public class DapServer implements IDebugProtocolServer {
         clientProxy_.initialized();
 
         if (pathTransforms.size() == 0) {
-            logger.finest("attached to frontend, using path transforms <none>");
+            Log.info("DAP client attached - no path transforms configured");
         }
         else {
-            logger.finest("attached to frontend, using path transforms:");
+            Log.info("DAP client attached - path transforms:");
             for (var transform : pathTransforms) {
-                logger.finest(transform.asTraceString());
+                Log.info("  " + transform.asTraceString());
             }
         }
 
@@ -321,8 +453,11 @@ public class DapServer implements IDebugProtocolServer {
 
         for (var cfFrame : luceeVm_.getStackTrace(args.getThreadId())) {
             final var source = new Source();
-            source.setPath(applyPathTransformsServerToIde(cfFrame.getSourceFilePath()));
-    
+            String rawPath = cfFrame.getSourceFilePath();
+            String transformedPath = applyPathTransformsServerToIde(rawPath);
+            Log.info("stackTrace: raw=" + rawPath + " -> transformed=" + transformedPath);
+            source.setPath(transformedPath);
+
             final var lspFrame = new org.eclipse.lsp4j.debug.StackFrame();
             lspFrame.setId((int)cfFrame.getId());
             lspFrame.setName(cfFrame.getName());
@@ -429,7 +564,20 @@ public class DapServer implements IDebugProtocolServer {
      */
     @Override
 	public CompletableFuture<SetExceptionBreakpointsResponse> setExceptionBreakpoints(SetExceptionBreakpointsArguments args) {
-        // set success false?
+		// Check if "uncaught" is in the filters
+		String[] filters = args.getFilters();
+		Log.info("setExceptionBreakpoints: filters=" + java.util.Arrays.toString(filters));
+		boolean breakOnUncaught = false;
+		if (filters != null) {
+			for (String filter : filters) {
+				if ("uncaught".equals(filter)) {
+					breakOnUncaught = true;
+					break;
+				}
+			}
+		}
+		NativeDebuggerListener.setBreakOnUncaughtExceptions(breakOnUncaught);
+		Log.info("setExceptionBreakpoints: uncaught=" + breakOnUncaught);
 		return CompletableFuture.completedFuture(new SetExceptionBreakpointsResponse());
 	}
 

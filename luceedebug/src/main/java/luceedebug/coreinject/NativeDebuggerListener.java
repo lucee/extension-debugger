@@ -7,6 +7,7 @@ import java.util.function.Consumer;
 
 import lucee.runtime.PageContext;
 import luceedebug.Config;
+import luceedebug.Log;
 
 /**
  * Step mode for stepping operations.
@@ -52,6 +53,37 @@ public class NativeDebuggerListener {
 	private static final ConcurrentHashMap<Long, WeakReference<PageContext>> nativelySuspendedThreads = new ConcurrentHashMap<>();
 
 	/**
+	 * Suspend location info for threads (file and line where suspended).
+	 * Used when there are no native DebuggerFrames (top-level code).
+	 */
+	private static final ConcurrentHashMap<Long, SuspendLocation> suspendLocations = new ConcurrentHashMap<>();
+
+	/**
+	 * Simple holder for file/line/label at suspend point.
+	 */
+	public static class SuspendLocation {
+		public final String file;
+		public final int line;
+		public final String label;
+		public final Throwable exception; // non-null if suspended due to exception
+		public SuspendLocation( String file, int line, String label ) {
+			this( file, line, label, null );
+		}
+		public SuspendLocation( String file, int line, String label, Throwable exception ) {
+			this.file = file;
+			this.line = line;
+			this.label = label;
+			this.exception = exception;
+		}
+	}
+
+	/**
+	 * Pending exception for a thread - stored when onException returns true,
+	 * then consumed when onSuspend is called.
+	 */
+	private static final ConcurrentHashMap<Long, Throwable> pendingExceptions = new ConcurrentHashMap<>();
+
+	/**
 	 * Callback to notify LuceeVm when a thread suspends via native breakpoint.
 	 * Called with Java thread ID and optional label. Used for "breakpoint" stop reason in DAP.
 	 * Label is non-null for programmatic breakpoint("label") calls, null otherwise.
@@ -69,6 +101,19 @@ public class NativeDebuggerListener {
 	 * When true, only native breakpoints are used.
 	 */
 	private static volatile boolean nativeOnlyMode = false;
+
+	/**
+	 * Flag indicating a DAP client is actually connected.
+	 * Set to true when DAP client connects, false when it disconnects.
+	 * Distinct from callbacks being registered (which happens at extension startup).
+	 */
+	private static volatile boolean dapClientConnected = false;
+
+	/**
+	 * Flag to break on uncaught exceptions.
+	 * Set via DAP setExceptionBreakpoints request.
+	 */
+	private static volatile boolean breakOnUncaughtExceptions = false;
 
 	/**
 	 * Per-thread stepping state.
@@ -93,7 +138,7 @@ public class NativeDebuggerListener {
 	 */
 	public static void setNativeOnlyMode(boolean enabled) {
 		nativeOnlyMode = enabled;
-		System.out.println("[luceedebug] Native-only mode: " + enabled);
+		Log.info("Native-only mode: " + enabled);
 	}
 
 	/**
@@ -135,10 +180,10 @@ public class NativeDebuggerListener {
 		breakpoints.put(key, Boolean.TRUE);
 		if (condition != null && !condition.isEmpty()) {
 			breakpointConditions.put(key, condition);
-			System.out.println("[luceedebug] Added native breakpoint: " + key + " condition=" + condition);
+			Log.info("Added native breakpoint: " + key + " condition=" + condition);
 		} else {
 			breakpointConditions.remove(key); // ensure no stale condition
-			System.out.println("[luceedebug] Added native breakpoint: " + key);
+			Log.info("Added native breakpoint: " + key);
 		}
 	}
 
@@ -149,7 +194,7 @@ public class NativeDebuggerListener {
 		String key = makeKey(file, line);
 		breakpoints.remove(key);
 		breakpointConditions.remove(key);
-		System.out.println("[luceedebug] Removed native breakpoint: " + key);
+		Log.info("Removed native breakpoint: " + key);
 	}
 
 	/**
@@ -159,7 +204,7 @@ public class NativeDebuggerListener {
 		String prefix = Config.canonicalizeFileName(file) + ":";
 		breakpoints.keySet().removeIf(key -> key.startsWith(prefix));
 		breakpointConditions.keySet().removeIf(key -> key.startsWith(prefix));
-		System.out.println("[luceedebug] Cleared native breakpoints for: " + file);
+		Log.info("Cleared native breakpoints for: " + file);
 	}
 
 	/**
@@ -168,7 +213,7 @@ public class NativeDebuggerListener {
 	public static void clearAllBreakpoints() {
 		breakpoints.clear();
 		breakpointConditions.clear();
-		System.out.println("[luceedebug] Cleared all native breakpoints");
+		Log.info("Cleared all native breakpoints");
 	}
 
 	/**
@@ -183,6 +228,14 @@ public class NativeDebuggerListener {
 	 */
 	public static boolean isNativelySuspended(long javaThreadId) {
 		return nativelySuspendedThreads.containsKey(javaThreadId);
+	}
+
+	/**
+	 * Get all suspended thread IDs.
+	 * Used by NativeLuceeVm to include suspended threads in thread listing.
+	 */
+	public static java.util.Set<Long> getSuspendedThreadIds() {
+		return new java.util.HashSet<>(nativelySuspendedThreads.keySet());
 	}
 
 	/**
@@ -201,6 +254,30 @@ public class NativeDebuggerListener {
 	}
 
 	/**
+	 * Get PageContext for a specific suspended thread.
+	 * Used by NativeLuceeVm to get stack frames.
+	 * @param javaThreadId The Java thread ID
+	 * @return the PageContext if found and still valid, null otherwise
+	 */
+	public static PageContext getPageContext(long javaThreadId) {
+		WeakReference<PageContext> ref = nativelySuspendedThreads.get(javaThreadId);
+		if (ref != null) {
+			return ref.get();
+		}
+		return null;
+	}
+
+	/**
+	 * Get suspend location for a specific thread.
+	 * Used to create synthetic frame for top-level code.
+	 * @param javaThreadId The Java thread ID
+	 * @return the SuspendLocation if thread is suspended, null otherwise
+	 */
+	public static SuspendLocation getSuspendLocation(long javaThreadId) {
+		return suspendLocations.get(javaThreadId);
+	}
+
+	/**
 	 * Resume a natively suspended thread by calling debuggerResume() on its PageContext.
 	 * Uses reflection since debuggerResume() is a Lucee7+ method not in the loader interface.
 	 * @return true if the thread was found and resumed, false otherwise
@@ -214,18 +291,17 @@ public class NativeDebuggerListener {
 		if (pc == null) {
 			return false;
 		}
-		System.out.println("[luceedebug] Resuming native thread: " + javaThreadId);
+		Log.info("Resuming native thread: " + javaThreadId);
 		try {
 			// Call debuggerResume() via reflection (Lucee7+ method)
 			java.lang.reflect.Method resumeMethod = pc.getClass().getMethod("debuggerResume");
 			resumeMethod.invoke(pc);
 			return true;
 		} catch (NoSuchMethodException e) {
-			System.out.println("[luceedebug] debuggerResume() not available (pre-Lucee7?)");
+			Log.error("debuggerResume() not available (pre-Lucee7?)");
 			return false;
 		} catch (Exception e) {
-			System.out.println("[luceedebug] Error calling debuggerResume(): " + e.getMessage());
-			e.printStackTrace();
+			Log.error("Error calling debuggerResume()", e);
 			return false;
 		}
 	}
@@ -249,7 +325,7 @@ public class NativeDebuggerListener {
 	 */
 	public static void startStepping(long threadId, StepMode mode, int currentDepth) {
 		steppingThreads.put(threadId, new StepState(mode, currentDepth));
-		System.out.println("[luceedebug] Start stepping: thread=" + threadId + " mode=" + mode + " depth=" + currentDepth);
+		Log.info("Start stepping: thread=" + threadId + " mode=" + mode + " depth=" + currentDepth);
 	}
 
 	/**
@@ -270,7 +346,7 @@ public class NativeDebuggerListener {
 			return frames != null ? frames.length : 0;
 		} catch (Exception e) {
 			// Log error - silent failure could cause incorrect step behavior
-			System.out.println("[luceedebug] Error getting stack depth: " + e.getMessage());
+			Log.error("Error getting stack depth: " + e.getMessage());
 			return 0;
 		}
 	}
@@ -283,7 +359,7 @@ public class NativeDebuggerListener {
 	 */
 	public static void onSuspend(PageContext pc, String file, int line, String label) {
 		long threadId = Thread.currentThread().getId();
-		System.out.println("[luceedebug] Native suspend: thread=" + threadId + " file=" + file + " line=" + line + " label=" + label);
+		Log.info("Native suspend: thread=" + threadId + " file=" + file + " line=" + line + " label=" + label);
 
 		// Check if we were stepping BEFORE clearing state
 		StepState stepState = steppingThreads.remove(threadId);
@@ -292,9 +368,16 @@ public class NativeDebuggerListener {
 		// Check if we hit a breakpoint (breakpoint wins over step)
 		boolean hitBreakpoint = breakpoints.containsKey(makeKey(file, line));
 
+		// Check if there's a pending exception for this thread (from onException)
+		Throwable pendingException = pendingExceptions.remove(threadId);
+
 		// Track the suspended thread so we can resume it later
 		// We store PageContext (not PageContextImpl) to avoid class loading cycles
 		nativelySuspendedThreads.put(threadId, new WeakReference<>(pc));
+
+		// Store suspend location for stack trace (needed when no native DebuggerFrames exist)
+		// Include the exception if we're suspending due to one
+		suspendLocations.put(threadId, new SuspendLocation(file, line, label, pendingException));
 
 		// Fire appropriate callback - breakpoint takes precedence over step
 		if (hitBreakpoint) {
@@ -323,10 +406,69 @@ public class NativeDebuggerListener {
 	 */
 	public static void onResume(PageContext pc) {
 		long threadId = Thread.currentThread().getId();
-		System.out.println("[luceedebug] Native resume: thread=" + threadId);
+		Log.info("Native resume: thread=" + threadId);
 
-		// Remove from suspended threads map
+		// Remove from suspended threads map and location
 		nativelySuspendedThreads.remove(threadId);
+		suspendLocations.remove(threadId);
+	}
+
+	/**
+	 * Check if a DAP client is connected and ready to handle breakpoints.
+	 * Uses explicit flag set when DAP client connects, not just callback registration.
+	 */
+	public static boolean isDapClientConnected() {
+		return dapClientConnected;
+	}
+
+	/**
+	 * Set the DAP client connected state.
+	 * Called by DapServer when client connects/disconnects.
+	 */
+	public static void setDapClientConnected(boolean connected) {
+		dapClientConnected = connected;
+		Log.info("DAP client connected: " + connected);
+	}
+
+	/**
+	 * Set whether to break on uncaught exceptions.
+	 * Called from DapServer when handling setExceptionBreakpoints request.
+	 */
+	public static void setBreakOnUncaughtExceptions(boolean enabled) {
+		breakOnUncaughtExceptions = enabled;
+		Log.info("Break on uncaught exceptions: " + enabled);
+	}
+
+	/**
+	 * Check if we should break on uncaught exceptions.
+	 */
+	public static boolean shouldBreakOnUncaughtExceptions() {
+		return breakOnUncaughtExceptions && dapClientConnected;
+	}
+
+	/**
+	 * Called by Lucee when an exception is about to be handled.
+	 * Returns true if we should suspend to let the debugger inspect.
+	 *
+	 * @param pc The PageContext
+	 * @param exception The exception
+	 * @param caught true if caught by try/catch, false if uncaught
+	 * @return true to suspend execution
+	 */
+	public static boolean onException(PageContext pc, Throwable exception, boolean caught) {
+		Log.info("onException called: caught=" + caught + ", exception=" + exception.getClass().getName() + ", breakOnUncaught=" + breakOnUncaughtExceptions + ", dapConnected=" + dapClientConnected);
+		// Only handle uncaught exceptions for now
+		if (caught) {
+			return false;
+		}
+		boolean shouldSuspend = shouldBreakOnUncaughtExceptions();
+		if (shouldSuspend) {
+			// Store exception for this thread - will be consumed in onSuspend
+			long threadId = Thread.currentThread().getId();
+			pendingExceptions.put(threadId, exception);
+		}
+		Log.info("onException returning: " + shouldSuspend);
+		return shouldSuspend;
 	}
 
 	/**
@@ -335,6 +477,11 @@ public class NativeDebuggerListener {
 	 * Must be fast - this is on the hot path.
 	 */
 	public static boolean shouldSuspend(PageContext pc, String file, int line) {
+		// Early exit if no DAP client connected - nothing to notify
+		if (!dapClientConnected) {
+			return false;
+		}
+
 		// Check breakpoints first (most common case)
 		String key = makeKey(file, line);
 		if (breakpoints.containsKey(key)) {
@@ -389,7 +536,7 @@ public class NativeDebuggerListener {
 		} catch (Exception e) {
 			// Condition evaluation failed - don't suspend
 			// Log but don't spam - conditions may intentionally reference undefined vars
-			System.out.println("[luceedebug] Condition evaluation failed: " + e.getMessage());
+			Log.debug("Condition evaluation failed: " + e.getMessage());
 			return false;
 		}
 	}

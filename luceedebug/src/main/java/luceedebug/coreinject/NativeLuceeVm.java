@@ -1,11 +1,16 @@
 package luceedebug.coreinject;
 
+import java.lang.ref.Cleaner;
 import java.util.ArrayList;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
+import lucee.runtime.PageContext;
+
 import luceedebug.*;
+import luceedebug.coreinject.frame.NativeDebugFrame;
 import luceedebug.strong.DapBreakpointID;
 import luceedebug.strong.CanonicalServerAbsPath;
 import luceedebug.strong.RawIdePath;
@@ -20,6 +25,9 @@ import luceedebug.strong.RawIdePath;
 public class NativeLuceeVm implements ILuceeVm {
 
 	private final Config config_;
+	private static ClassLoader luceeClassLoader;
+	private static final Cleaner cleaner = Cleaner.create();
+	private final ValTracker valTracker = new ValTracker(cleaner);
 
 	private Consumer<Long> stepEventCallback = null;
 	private BiConsumer<Long, DapBreakpointID> breakpointEventCallback = null;
@@ -27,6 +35,17 @@ public class NativeLuceeVm implements ILuceeVm {
 	private Consumer<BreakpointsChangedEvent> breakpointsChangedCallback = null;
 
 	private AtomicInteger breakpointID = new AtomicInteger();
+
+	// Cache of frame ID -> frame for scope/variable lookups
+	private final ConcurrentHashMap<Long, IDebugFrame> frameCache = new ConcurrentHashMap<>();
+
+	/**
+	 * Set the Lucee classloader for reflection access to Lucee core classes.
+	 * Must be called before creating NativeLuceeVm in extension mode.
+	 */
+	public static void setLuceeClassLoader(ClassLoader cl) {
+		luceeClassLoader = cl;
+	}
 
 	public NativeLuceeVm(Config config) {
 		this.config_ = config;
@@ -81,54 +100,88 @@ public class NativeLuceeVm implements ILuceeVm {
 	@Override
 	public ThreadInfo[] getThreadListing() {
 		var result = new ArrayList<ThreadInfo>();
+		var seenThreadIds = new java.util.HashSet<Long>();
 
-		// Get active PageContexts from Lucee's CFMLFactory
-		// We need a PageContext to get the factory - try ThreadLocalPageContext or suspended threads
-		lucee.runtime.PageContext anyPc = lucee.runtime.engine.ThreadLocalPageContext.get();
-
-		// If not on a request thread, try to get from suspended threads
-		if (anyPc == null) {
-			anyPc = NativeDebuggerListener.getAnyPageContext();
-		}
-
-		if (anyPc != null) {
-			try {
-				// Get the CFMLFactory from the PageContext
-				Object factory = anyPc.getCFMLFactory();
-
-				// Call getActivePageContexts() via reflection (it's in CFMLFactoryImpl, not loader)
-				java.lang.reflect.Method getActiveMethod = factory.getClass().getMethod("getActivePageContexts");
-				@SuppressWarnings("unchecked")
-				java.util.Map<Integer, ?> activeContexts = (java.util.Map<Integer, ?>) getActiveMethod.invoke(factory);
-
-				// Each PageContext has a getThread() method
-				for (Object pc : activeContexts.values()) {
-					try {
-						java.lang.reflect.Method getThreadMethod = pc.getClass().getMethod("getThread");
-						Thread thread = (Thread) getThreadMethod.invoke(pc);
-						if (thread != null) {
-							result.add(new ThreadInfo(thread.getId(), thread.getName()));
-						}
-					} catch (Exception e) {
-						// Skip this context if we can't get its thread
-					}
-				}
-			} catch (Exception e) {
-				System.out.println("[luceedebug] Error getting active page contexts: " + e.getMessage());
+		// First, add any suspended threads (these are most important for debugging)
+		for (Long threadId : NativeDebuggerListener.getSuspendedThreadIds()) {
+			Thread thread = findThreadById(threadId);
+			if (thread != null) {
+				result.add(new ThreadInfo(thread.getId(), thread.getName() + " (suspended)"));
+				seenThreadIds.add(threadId);
 			}
 		}
 
+		try {
+			// Get CFMLEngine via the loader's factory (available to extension classloader)
+			Object engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
+
+			// The factory returns CFMLEngineWrapper - unwrap to get CFMLEngineImpl
+			java.lang.reflect.Method getEngineMethod = engine.getClass().getMethod("getEngine");
+			Object engineImpl = getEngineMethod.invoke(engine);
+
+			// Get all CFMLFactory instances from the engine impl
+			// CFMLEngineImpl has getCFMLFactories() returning Map<String, CFMLFactory>
+			java.lang.reflect.Method getFactoriesMethod = engineImpl.getClass().getMethod("getCFMLFactories");
+			@SuppressWarnings("unchecked")
+			java.util.Map<String, ?> factoriesMap = (java.util.Map<String, ?>) getFactoriesMethod.invoke(engineImpl);
+			Object[] factories = factoriesMap.values().toArray();
+
+			for (Object factory : factories) {
+				try {
+					// Call getActivePageContexts() - it's in CFMLFactoryImpl
+					java.lang.reflect.Method getActiveMethod = factory.getClass().getMethod("getActivePageContexts");
+					@SuppressWarnings("unchecked")
+					java.util.Map<Integer, ?> activeContexts = (java.util.Map<Integer, ?>) getActiveMethod.invoke(factory);
+
+					// Each PageContext has a getThread() method
+					for (Object pc : activeContexts.values()) {
+						try {
+							java.lang.reflect.Method getThreadMethod = pc.getClass().getMethod("getThread");
+							Thread thread = (Thread) getThreadMethod.invoke(pc);
+							if (thread != null && !seenThreadIds.contains(thread.getId())) {
+								result.add(new ThreadInfo(thread.getId(), thread.getName()));
+								seenThreadIds.add(thread.getId());
+							}
+						} catch (Exception e) {
+							// Skip this context if we can't get its thread
+						}
+					}
+				} catch (Exception e) {
+					// Skip this factory
+				}
+			}
+		} catch (Exception e) {
+			Log.error("Error getting thread listing", e);
+		}
+
+		Log.debug("Thread listing: " + result.size() + " threads");
 		return result.toArray(new ThreadInfo[0]);
 	}
 
 	@Override
 	public IDebugFrame[] getStackTrace(long threadID) {
-		// Get the thread and use DebugManager to get CF stack
-		Thread thread = findThreadById(threadID);
-		if (thread == null) {
+		// In native mode, get frames from the suspended thread's PageContext
+		PageContext pc = NativeDebuggerListener.getPageContext(threadID);
+		if (pc == null) {
+			Log.debug("getStackTrace: no PageContext for thread " + threadID);
 			return new IDebugFrame[0];
 		}
-		return GlobalIDebugManagerHolder.debugManager.getCfStack(thread);
+
+		// Use NativeDebugFrame to get the CFML stack from PageContext
+		// Pass threadID so it can create synthetic frame for top-level code
+		IDebugFrame[] frames = NativeDebugFrame.getNativeFrames(pc, valTracker, threadID, luceeClassLoader);
+		if (frames == null) {
+			Log.debug("getStackTrace: no native frames for thread " + threadID);
+			return new IDebugFrame[0];
+		}
+
+		// Cache frames for later scope/variable lookups
+		for (IDebugFrame frame : frames) {
+			frameCache.put(frame.getId(), frame);
+		}
+
+		Log.debug("getStackTrace: returning " + frames.length + " frames for thread " + threadID);
+		return frames;
 	}
 
 	private Thread findThreadById(long threadId) {
@@ -144,22 +197,39 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	@Override
 	public IDebugEntity[] getScopes(long frameID) {
-		return GlobalIDebugManagerHolder.debugManager.getScopesForFrame(frameID);
+		// Look up frame from cache
+		IDebugFrame frame = frameCache.get(frameID);
+		if (frame == null) {
+			Log.debug("getScopes: frame " + frameID + " not found in cache");
+			return new IDebugEntity[0];
+		}
+		return frame.getScopes();
 	}
 
 	@Override
 	public IDebugEntity[] getVariables(long ID) {
-		return GlobalIDebugManagerHolder.debugManager.getVariables(ID, null);
+		return getVariablesImpl(ID, null);
 	}
 
 	@Override
 	public IDebugEntity[] getNamedVariables(long ID) {
-		return GlobalIDebugManagerHolder.debugManager.getVariables(ID, IDebugEntity.DebugEntityType.NAMED);
+		return getVariablesImpl(ID, IDebugEntity.DebugEntityType.NAMED);
 	}
 
 	@Override
 	public IDebugEntity[] getIndexedVariables(long ID) {
-		return GlobalIDebugManagerHolder.debugManager.getVariables(ID, IDebugEntity.DebugEntityType.INDEXED);
+		return getVariablesImpl(ID, IDebugEntity.DebugEntityType.INDEXED);
+	}
+
+	private IDebugEntity[] getVariablesImpl(long variablesReference, IDebugEntity.DebugEntityType which) {
+		// Look up the object by its variablesReference ID
+		var maybeObj = valTracker.maybeGetFromId(variablesReference);
+		if (maybeObj.isEmpty()) {
+			Log.debug("getVariables: variablesReference " + variablesReference + " not found");
+			return new IDebugEntity[0];
+		}
+		Object obj = maybeObj.get().obj;
+		return CfValueDebuggerBridge.getAsDebugEntity(valTracker, obj, which);
 	}
 
 	// ========== Breakpoint operations ==========
@@ -260,6 +330,11 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	@Override
 	public Either<String, Either<ICfValueDebuggerBridge, String>> evaluate(int frameID, String expr) {
+		// In native mode, GlobalIDebugManagerHolder.debugManager is null
+		// TODO: Implement native evaluation using PageContext
+		if (GlobalIDebugManagerHolder.debugManager == null) {
+			return Either.Left("Expression evaluation not yet supported in native debugger mode");
+		}
 		return GlobalIDebugManagerHolder.debugManager.evaluate((Long)(long)frameID, expr);
 	}
 }

@@ -35,6 +35,7 @@ echo.
 
 rem Enable debugger via env var - set port to enable
 set LUCEE_DEBUGGER_PORT=10000
+set LUCEE_DEBUGGER_ENABLED=true
 
 rem Enable verbose logging
 set LUCEE_LOGGING_FORCE_APPENDER=console
