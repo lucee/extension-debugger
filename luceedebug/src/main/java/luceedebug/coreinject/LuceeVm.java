@@ -1179,4 +1179,14 @@ public class LuceeVm implements ILuceeVm {
     public Either<String, Either<ICfValueDebuggerBridge, String>> evaluate(int frameID, String expr) {
         return GlobalIDebugManagerHolder.debugManager.evaluate((Long)(long)frameID, expr);
     }
+
+    // Not used in JDWP mode - exception handling uses JDWP events
+    public void registerExceptionEventCallback(Consumer<Long> cb) {
+        // no-op for JDWP mode
+    }
+
+    public Throwable getExceptionForThread(long threadId) {
+        // JDWP mode doesn't use NativeDebuggerListener for exceptions
+        return null;
+    }
 }

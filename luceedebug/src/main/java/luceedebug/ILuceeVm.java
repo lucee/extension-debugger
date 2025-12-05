@@ -85,4 +85,18 @@ public interface ILuceeVm {
     public String getSourcePathForVariablesRef(int variablesRef);
 
     public Either<String, Either<ICfValueDebuggerBridge, String>> evaluate(int frameID, String expr);
+
+    /**
+     * Register callback for exception events (native mode only).
+     * Called with Java thread ID when a thread stops due to an uncaught exception.
+     */
+    public void registerExceptionEventCallback(java.util.function.Consumer<Long> cb);
+
+    /**
+     * Get the exception that caused a thread to suspend.
+     * Returns null if the thread is not suspended due to an exception.
+     * @param threadId The Java thread ID
+     * @return The exception, or null
+     */
+    public Throwable getExceptionForThread(long threadId);
 }

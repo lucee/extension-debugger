@@ -34,16 +34,22 @@ enum StepMode {
 public class NativeDebuggerListener {
 
 	/**
-	 * Map of "file:line" -> true for active breakpoints.
-	 * Uses ConcurrentHashMap for thread-safe access from multiple request threads.
+	 * Breakpoint storage - parallel arrays for fast lookup.
+	 * Writers synchronize on breakpointLock, readers just access the arrays.
+	 * The volatile hasSuspendConditions provides the memory barrier for visibility.
 	 */
-	private static final ConcurrentHashMap<String, Boolean> breakpoints = new ConcurrentHashMap<>();
+	private static final Object breakpointLock = new Object();
+	private static int[] bpLines = new int[0];
+	private static String[] bpFiles = new String[0];
+	private static String[] bpConditions = new String[0];  // null entries for unconditional
 
 	/**
-	 * Map of "file:line" -> condition expression for conditional breakpoints.
-	 * If a breakpoint has no condition, it won't have an entry here.
+	 * Pre-computed bounds for fast rejection in shouldSuspend().
+	 * Updated whenever breakpoints change.
 	 */
-	private static final ConcurrentHashMap<String, String> breakpointConditions = new ConcurrentHashMap<>();
+	private static int bpMinLine = Integer.MAX_VALUE;
+	private static int bpMaxLine = Integer.MIN_VALUE;
+	private static int bpMaxPathLen = 0;
 
 	/**
 	 * Map of Java thread ID -> WeakReference<PageContext> for natively suspended threads.
@@ -97,6 +103,12 @@ public class NativeDebuggerListener {
 	private static volatile Consumer<Long> onNativeStepCallback = null;
 
 	/**
+	 * Callback to notify LuceeVm when a thread stops due to an exception.
+	 * Called with Java thread ID. Used for "exception" stop reason in DAP.
+	 */
+	private static volatile Consumer<Long> onNativeExceptionCallback = null;
+
+	/**
 	 * Flag to indicate native-only mode (no JDWP breakpoints).
 	 * When true, only native breakpoints are used.
 	 */
@@ -116,9 +128,49 @@ public class NativeDebuggerListener {
 	private static volatile boolean breakOnUncaughtExceptions = false;
 
 	/**
+	 * Flag to forward System.out/err to DAP client.
+	 * Set via launch.json logSystemOutput option.
+	 */
+	private static volatile boolean logSystemOutput = false;
+
+	/**
+	 * Fast-path flag: true when there's anything that could cause a suspend.
+	 * When false, shouldSuspend() returns immediately without any work.
+	 * Updated whenever breakpoints, exceptions, or stepping state changes.
+	 */
+	private static volatile boolean hasSuspendConditions = false;
+
+	/**
 	 * Per-thread stepping state.
 	 */
 	private static final ConcurrentHashMap<Long, StepState> steppingThreads = new ConcurrentHashMap<>();
+
+	/**
+	 * Update hasSuspendConditions flag based on current state.
+	 * Called whenever breakpoints, exception settings, or stepping state changes.
+	 */
+	private static void updateHasSuspendConditions() {
+		hasSuspendConditions = dapClientConnected &&
+			(bpLines.length > 0 || breakOnUncaughtExceptions || !steppingThreads.isEmpty());
+	}
+
+	/**
+	 * Rebuild breakpoint bounds after any modification.
+	 * Must be called while holding breakpointLock.
+	 */
+	private static void rebuildBreakpointBounds() {
+		int min = Integer.MAX_VALUE;
+		int max = Integer.MIN_VALUE;
+		int maxLen = 0;
+		for (int i = 0; i < bpLines.length; i++) {
+			if (bpLines[i] < min) min = bpLines[i];
+			if (bpLines[i] > max) max = bpLines[i];
+			if (bpFiles[i].length() > maxLen) maxLen = bpFiles[i].length();
+		}
+		bpMinLine = min;
+		bpMaxLine = max;
+		bpMaxPathLen = maxLen;
+	}
 
 	/**
 	 * Stepping state for a single thread.
@@ -165,6 +217,14 @@ public class NativeDebuggerListener {
 	}
 
 	/**
+	 * Set the callback for native exception events.
+	 * LuceeVm should register this to receive notifications and send DAP exception events.
+	 */
+	public static void setOnNativeExceptionCallback(Consumer<Long> callback) {
+		onNativeExceptionCallback = callback;
+	}
+
+	/**
 	 * Add a breakpoint at the given file and line.
 	 */
 	public static void addBreakpoint(String file, int line) {
@@ -176,51 +236,130 @@ public class NativeDebuggerListener {
 	 * @param condition CFML expression to evaluate, or null for unconditional breakpoint
 	 */
 	public static void addBreakpoint(String file, int line, String condition) {
-		String key = makeKey(file, line);
-		breakpoints.put(key, Boolean.TRUE);
-		if (condition != null && !condition.isEmpty()) {
-			breakpointConditions.put(key, condition);
-			Log.info("Added native breakpoint: " + key + " condition=" + condition);
-		} else {
-			breakpointConditions.remove(key); // ensure no stale condition
-			Log.info("Added native breakpoint: " + key);
+		String canonFile = Config.canonicalizeFileName(file);
+		String newCondition = (condition != null && !condition.isEmpty()) ? condition : null;
+		synchronized (breakpointLock) {
+			// Check if already exists - update condition if so
+			for (int i = 0; i < bpLines.length; i++) {
+				if (bpLines[i] == line && bpFiles[i].equals(canonFile)) {
+					// Copy-on-write: create new array for thread safety
+					String[] newConditions = bpConditions.clone();
+					newConditions[i] = newCondition;
+					bpConditions = newConditions;
+					Log.info("Breakpoint updated: " + Config.shortenPath(canonFile) + ":" + line);
+					return;
+				}
+			}
+			// Add new breakpoint
+			int len = bpLines.length;
+			int[] newLines = new int[len + 1];
+			String[] newFiles = new String[len + 1];
+			String[] newConditions = new String[len + 1];
+			System.arraycopy(bpLines, 0, newLines, 0, len);
+			System.arraycopy(bpFiles, 0, newFiles, 0, len);
+			System.arraycopy(bpConditions, 0, newConditions, 0, len);
+			newLines[len] = line;
+			newFiles[len] = canonFile;
+			newConditions[len] = newCondition;
+			bpLines = newLines;
+			bpFiles = newFiles;
+			bpConditions = newConditions;
+			rebuildBreakpointBounds();
 		}
+		updateHasSuspendConditions();
+		Log.info("Breakpoint set: " + Config.shortenPath(canonFile) + ":" + line +
+			(newCondition != null ? " condition=" + newCondition : ""));
 	}
 
 	/**
 	 * Remove a breakpoint at the given file and line.
 	 */
 	public static void removeBreakpoint(String file, int line) {
-		String key = makeKey(file, line);
-		breakpoints.remove(key);
-		breakpointConditions.remove(key);
-		Log.info("Removed native breakpoint: " + key);
+		String canonFile = Config.canonicalizeFileName(file);
+		synchronized (breakpointLock) {
+			int idx = -1;
+			for (int i = 0; i < bpLines.length; i++) {
+				if (bpLines[i] == line && bpFiles[i].equals(canonFile)) {
+					idx = i;
+					break;
+				}
+			}
+			if (idx < 0) return;  // not found
+
+			int len = bpLines.length;
+			int[] newLines = new int[len - 1];
+			String[] newFiles = new String[len - 1];
+			String[] newConditions = new String[len - 1];
+			System.arraycopy(bpLines, 0, newLines, 0, idx);
+			System.arraycopy(bpLines, idx + 1, newLines, idx, len - idx - 1);
+			System.arraycopy(bpFiles, 0, newFiles, 0, idx);
+			System.arraycopy(bpFiles, idx + 1, newFiles, idx, len - idx - 1);
+			System.arraycopy(bpConditions, 0, newConditions, 0, idx);
+			System.arraycopy(bpConditions, idx + 1, newConditions, idx, len - idx - 1);
+			bpLines = newLines;
+			bpFiles = newFiles;
+			bpConditions = newConditions;
+			rebuildBreakpointBounds();
+		}
+		updateHasSuspendConditions();
+		Log.info("Breakpoint removed: " + Config.shortenPath(canonFile) + ":" + line);
 	}
 
 	/**
 	 * Clear all breakpoints for a given file.
 	 */
 	public static void clearBreakpointsForFile(String file) {
-		String prefix = Config.canonicalizeFileName(file) + ":";
-		breakpoints.keySet().removeIf(key -> key.startsWith(prefix));
-		breakpointConditions.keySet().removeIf(key -> key.startsWith(prefix));
-		Log.info("Cleared native breakpoints for: " + file);
+		String canonFile = Config.canonicalizeFileName(file);
+		synchronized (breakpointLock) {
+			// Count how many to keep
+			int keepCount = 0;
+			for (int i = 0; i < bpFiles.length; i++) {
+				if (!bpFiles[i].equals(canonFile)) keepCount++;
+			}
+			if (keepCount == bpFiles.length) return;  // nothing to remove
+
+			int[] newLines = new int[keepCount];
+			String[] newFiles = new String[keepCount];
+			String[] newConditions = new String[keepCount];
+			int j = 0;
+			for (int i = 0; i < bpFiles.length; i++) {
+				if (!bpFiles[i].equals(canonFile)) {
+					newLines[j] = bpLines[i];
+					newFiles[j] = bpFiles[i];
+					newConditions[j] = bpConditions[i];
+					j++;
+				}
+			}
+			bpLines = newLines;
+			bpFiles = newFiles;
+			bpConditions = newConditions;
+			rebuildBreakpointBounds();
+		}
+		updateHasSuspendConditions();
+		Log.info("Breakpoints cleared: " + Config.shortenPath(file));
 	}
 
 	/**
 	 * Clear all breakpoints.
 	 */
 	public static void clearAllBreakpoints() {
-		breakpoints.clear();
-		breakpointConditions.clear();
-		Log.info("Cleared all native breakpoints");
+		synchronized (breakpointLock) {
+			bpLines = new int[0];
+			bpFiles = new String[0];
+			bpConditions = new String[0];
+			bpMinLine = Integer.MAX_VALUE;
+			bpMaxLine = Integer.MIN_VALUE;
+			bpMaxPathLen = 0;
+		}
+		updateHasSuspendConditions();
+		Log.info("Breakpoints cleared: all");
 	}
 
 	/**
 	 * Get breakpoint count (for debugging).
 	 */
 	public static int getBreakpointCount() {
-		return breakpoints.size();
+		return bpLines.length;
 	}
 
 	/**
@@ -291,7 +430,7 @@ public class NativeDebuggerListener {
 		if (pc == null) {
 			return false;
 		}
-		Log.info("Resuming native thread: " + javaThreadId);
+		Log.debug("Resuming thread: " + javaThreadId);
 		try {
 			// Call debuggerResume() via reflection (Lucee7+ method)
 			java.lang.reflect.Method resumeMethod = pc.getClass().getMethod("debuggerResume");
@@ -325,7 +464,8 @@ public class NativeDebuggerListener {
 	 */
 	public static void startStepping(long threadId, StepMode mode, int currentDepth) {
 		steppingThreads.put(threadId, new StepState(mode, currentDepth));
-		Log.info("Start stepping: thread=" + threadId + " mode=" + mode + " depth=" + currentDepth);
+		updateHasSuspendConditions();
+		Log.debug("Start stepping: thread=" + threadId + " mode=" + mode + " depth=" + currentDepth);
 	}
 
 	/**
@@ -333,6 +473,7 @@ public class NativeDebuggerListener {
 	 */
 	public static void stopStepping(long threadId) {
 		steppingThreads.remove(threadId);
+		updateHasSuspendConditions();
 	}
 
 	/**
@@ -359,14 +500,14 @@ public class NativeDebuggerListener {
 	 */
 	public static void onSuspend(PageContext pc, String file, int line, String label) {
 		long threadId = Thread.currentThread().getId();
-		Log.info("Native suspend: thread=" + threadId + " file=" + file + " line=" + line + " label=" + label);
+		Log.debug("Suspend: thread=" + threadId + " file=" + Config.shortenPath(file) + " line=" + line + " label=" + label);
 
 		// Check if we were stepping BEFORE clearing state
 		StepState stepState = steppingThreads.remove(threadId);
 		boolean wasStepping = (stepState != null);
 
 		// Check if we hit a breakpoint (breakpoint wins over step)
-		boolean hitBreakpoint = breakpoints.containsKey(makeKey(file, line));
+		boolean hitBreakpoint = hasBreakpoint(file, line);
 
 		// Check if there's a pending exception for this thread (from onException)
 		Throwable pendingException = pendingExceptions.remove(threadId);
@@ -379,8 +520,14 @@ public class NativeDebuggerListener {
 		// Include the exception if we're suspending due to one
 		suspendLocations.put(threadId, new SuspendLocation(file, line, label, pendingException));
 
-		// Fire appropriate callback - breakpoint takes precedence over step
-		if (hitBreakpoint) {
+		// Fire appropriate callback - exception takes precedence, then breakpoint, then step
+		if (pendingException != null) {
+			// Stopped due to uncaught exception
+			Consumer<Long> callback = onNativeExceptionCallback;
+			if (callback != null) {
+				callback.accept(threadId);
+			}
+		} else if (hitBreakpoint) {
 			// Stopped at breakpoint (no label for line breakpoints)
 			BiConsumer<Long, String> callback = onNativeSuspendCallback;
 			if (callback != null) {
@@ -406,7 +553,7 @@ public class NativeDebuggerListener {
 	 */
 	public static void onResume(PageContext pc) {
 		long threadId = Thread.currentThread().getId();
-		Log.info("Native resume: thread=" + threadId);
+		Log.debug("Resume: thread=" + threadId);
 
 		// Remove from suspended threads map and location
 		nativelySuspendedThreads.remove(threadId);
@@ -427,6 +574,7 @@ public class NativeDebuggerListener {
 	 */
 	public static void setDapClientConnected(boolean connected) {
 		dapClientConnected = connected;
+		updateHasSuspendConditions();
 		Log.info("DAP client connected: " + connected);
 	}
 
@@ -436,7 +584,8 @@ public class NativeDebuggerListener {
 	 */
 	public static void setBreakOnUncaughtExceptions(boolean enabled) {
 		breakOnUncaughtExceptions = enabled;
-		Log.info("Break on uncaught exceptions: " + enabled);
+		updateHasSuspendConditions();
+		Log.info("Exception breakpoints: " + (enabled ? "uncaught" : "none"));
 	}
 
 	/**
@@ -444,6 +593,30 @@ public class NativeDebuggerListener {
 	 */
 	public static boolean shouldBreakOnUncaughtExceptions() {
 		return breakOnUncaughtExceptions && dapClientConnected;
+	}
+
+	/**
+	 * Set whether to forward System.out/err to DAP client.
+	 * Called from DapServer when handling attach request.
+	 */
+	public static void setLogSystemOutput(boolean enabled) {
+		logSystemOutput = enabled;
+		Log.setLogSystemOutput(enabled);
+		Log.info("Log system output: " + enabled);
+	}
+
+	/**
+	 * Called by Lucee's DebuggerPrintStream when output is written to System.out/err.
+	 * Forwards to DAP client if logSystemOutput is enabled.
+	 *
+	 * @param text The text that was written
+	 * @param isStdErr true if stderr, false if stdout
+	 */
+	public static void onOutput(String text, boolean isStdErr) {
+		if (!logSystemOutput || !dapClientConnected) {
+			return;
+		}
+		Log.systemOutput(text, isStdErr);
 	}
 
 	/**
@@ -456,7 +629,11 @@ public class NativeDebuggerListener {
 	 * @return true to suspend execution
 	 */
 	public static boolean onException(PageContext pc, Throwable exception, boolean caught) {
-		Log.info("onException called: caught=" + caught + ", exception=" + exception.getClass().getName() + ", breakOnUncaught=" + breakOnUncaughtExceptions + ", dapConnected=" + dapClientConnected);
+		Log.debug("onException called: caught=" + caught + ", exception=" + exception.getClass().getName() + ", breakOnUncaught=" + breakOnUncaughtExceptions + ", dapConnected=" + dapClientConnected);
+
+		// Log exception to debug console if enabled (both caught and uncaught)
+		Log.exception(exception);
+
 		// Only handle uncaught exceptions for now
 		if (caught) {
 			return false;
@@ -467,7 +644,7 @@ public class NativeDebuggerListener {
 			long threadId = Thread.currentThread().getId();
 			pendingExceptions.put(threadId, exception);
 		}
-		Log.info("onException returning: " + shouldSuspend);
+		Log.debug("onException returning: " + shouldSuspend);
 		return shouldSuspend;
 	}
 
@@ -477,21 +654,43 @@ public class NativeDebuggerListener {
 	 * Must be fast - this is on the hot path.
 	 */
 	public static boolean shouldSuspend(PageContext pc, String file, int line) {
-		// Early exit if no DAP client connected - nothing to notify
-		if (!dapClientConnected) {
+		// Fast path - nothing could possibly cause a suspend
+		if (!hasSuspendConditions) {
 			return false;
 		}
 
-		// Check breakpoints first (most common case)
-		String key = makeKey(file, line);
-		if (breakpoints.containsKey(key)) {
-			// Check if there's a condition
-			String condition = breakpointConditions.get(key);
-			if (condition != null) {
-				// Evaluate condition - only suspend if true
-				return evaluateCondition(pc, condition);
+		// Check breakpoints with fast bounds rejection
+		// Grab local refs - volatile hasSuspendConditions provides memory barrier
+		int[] lines = bpLines;
+		if (lines.length > 0) {
+			// Bounds check - reject 99% of lines instantly
+			if (line >= bpMinLine && line <= bpMaxLine) {
+				// Line is in range - check for matching line numbers first
+				// Only canonicalize file path if we find a line match (rare)
+				String[] files = bpFiles;
+				String[] conditions = bpConditions;
+				String canonFile = null;  // lazy init
+				for (int i = 0; i < lines.length; i++) {
+					if (lines[i] == line) {
+						// Line matches - now check file (canonicalize once)
+						if (canonFile == null) {
+							// Length check before expensive canonicalization
+							if (file.length() > bpMaxPathLen) {
+								break;  // file too long, can't match any breakpoint
+							}
+							canonFile = Config.canonicalizeFileName(file);
+						}
+						if (files[i].equals(canonFile)) {
+							// Hit! Check condition if present
+							String condition = conditions[i];
+							if (condition != null) {
+								return evaluateCondition(pc, condition);
+							}
+							return true;
+						}
+					}
+				}
 			}
-			return true;
 		}
 
 		// Check stepping state
@@ -545,11 +744,14 @@ public class NativeDebuggerListener {
 	 * Check if a breakpoint exists at the given file and line.
 	 */
 	public static boolean hasBreakpoint(String file, int line) {
-		String key = makeKey(file, line);
-		return breakpoints.containsKey(key);
-	}
-
-	private static String makeKey(String file, int line) {
-		return Config.canonicalizeFileName(file) + ":" + line;
+		String canonFile = Config.canonicalizeFileName(file);
+		int[] lines = bpLines;
+		String[] files = bpFiles;
+		for (int i = 0; i < lines.length; i++) {
+			if (lines[i] == line && files[i].equals(canonFile)) {
+				return true;
+			}
+		}
+		return false;
 	}
 }

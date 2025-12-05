@@ -9,12 +9,51 @@ import org.eclipse.lsp4j.debug.services.IDebugProtocolClient;
  * Routes all log messages through a common method that:
  * - Writes to System.out with [luceedebug] prefix
  * - Optionally sends to DAP OutputEvent when a client is connected
+ * - Supports ANSI colors (configurable via launch.json colorLogs, default true)
+ * - Respects log level (configurable via launch.json logLevel, default info)
  */
 public class Log {
 	private static final String PREFIX = "[luceedebug] ";
 
+	// ANSI escape codes (for console/tomcat output)
+	private static final String ANSI_RESET = "\u001b[0m";
+	private static final String ANSI_RED = "\u001b[31m";
+	private static final String ANSI_YELLOW = "\u001b[33m";
+	private static final String ANSI_CYAN = "\u001b[36m";
+	private static final String ANSI_DIM = "\u001b[2m";
+
 	// DAP client for sending OutputEvents (set when client connects)
 	private static volatile IDebugProtocolClient dapClient = null;
+
+	// Runtime settings from launch.json
+	private static volatile boolean colorLogs = true;
+	private static volatile LogLevel logLevel = LogLevel.INFO;
+	private static volatile boolean logExceptions = false;
+	private static volatile boolean logSystemOutput = false;
+
+	// Internal debugging - only enabled via env var LUCEE_DEBUGGER_DEBUG
+	private static final boolean internalDebug;
+	static {
+		String env = System.getenv("LUCEE_DEBUGGER_DEBUG");
+		internalDebug = env != null && !env.isEmpty() && !env.equals("0") && !env.equalsIgnoreCase("false");
+	}
+
+	public enum LogLevel {
+		ERROR(0),
+		INFO(1),
+		DEBUG(2),
+		TRACE(3);
+
+		private final int level;
+
+		LogLevel(int level) {
+			this.level = level;
+		}
+
+		public boolean isEnabled(LogLevel threshold) {
+			return this.level <= threshold.level;
+		}
+	}
 
 	/**
 	 * Set the DAP client to receive log messages as OutputEvents.
@@ -25,20 +64,70 @@ public class Log {
 	}
 
 	/**
-	 * Log a message to console and optionally to DAP client.
+	 * Set color logs setting from launch.json.
+	 */
+	public static void setColorLogs(boolean enabled) {
+		colorLogs = enabled;
+	}
+
+	/**
+	 * Set log level from launch.json.
+	 */
+	public static void setLogLevel(LogLevel level) {
+		logLevel = level;
+	}
+
+	/**
+	 * Set exception logging from launch.json.
+	 */
+	public static void setLogExceptions(boolean enabled) {
+		logExceptions = enabled;
+	}
+
+	/**
+	 * Set system output logging from launch.json.
+	 * When enabled, we skip sending directly to DAP since System.out/err
+	 * will be captured and forwarded via systemOutput().
+	 */
+	public static void setLogSystemOutput(boolean enabled) {
+		logSystemOutput = enabled;
+	}
+
+	/**
+	 * Log an info message to console and optionally to DAP client.
+	 * Only logged if log level is INFO or higher.
 	 */
 	public static void info(String message) {
-		String prefixed = PREFIX + message;
-		System.out.println(prefixed);
+		if (!LogLevel.INFO.isEnabled(logLevel)) {
+			return;
+		}
+		// When logSystemOutput is enabled, skip System.out (it gets captured and
+		// forwarded to DAP, causing double-logging). Send directly to DAP instead.
+		if (!logSystemOutput) {
+			String consoleMsg;
+			if (colorLogs) {
+				consoleMsg = ANSI_CYAN + PREFIX + ANSI_RESET + message;
+			} else {
+				consoleMsg = PREFIX + message;
+			}
+			System.out.println(consoleMsg);
+		}
 		sendToDap(message, OutputEventArgumentsCategory.CONSOLE);
 	}
 
 	/**
-	 * Log an error message.
+	 * Log an error message. Always logged regardless of log level.
 	 */
 	public static void error(String message) {
-		String prefixed = PREFIX + "ERROR: " + message;
-		System.out.println(prefixed);
+		if (!logSystemOutput) {
+			String consoleMsg;
+			if (colorLogs) {
+				consoleMsg = ANSI_RED + PREFIX + "ERROR: " + message + ANSI_RESET;
+			} else {
+				consoleMsg = PREFIX + "ERROR: " + message;
+			}
+			System.out.println(consoleMsg);
+		}
 		sendToDap("ERROR: " + message, OutputEventArgumentsCategory.STDERR);
 	}
 
@@ -51,12 +140,113 @@ public class Log {
 	}
 
 	/**
-	 * Log a debug message (only to console, not to DAP).
-	 * Only printed if LUCEE_DEBUGGER_LOGLEVEL=debug.
+	 * Log a debug message.
+	 * Only printed if LUCEE_DEBUGGER_DEBUG env var is set.
+	 * Uses STDOUT category in DAP for normal (non-highlighted) display.
 	 */
 	public static void debug(String message) {
-		if (EnvUtil.isDebugLoggingEnabled()) {
-			System.out.println(PREFIX + "DEBUG: " + message);
+		if (!internalDebug) {
+			return;
+		}
+		if (!logSystemOutput) {
+			String consoleMsg;
+			if (colorLogs) {
+				consoleMsg = ANSI_DIM + PREFIX + "DEBUG: " + message + ANSI_RESET;
+			} else {
+				consoleMsg = PREFIX + "DEBUG: " + message;
+			}
+			System.out.println(consoleMsg);
+		}
+		sendToDap("DEBUG: " + message, OutputEventArgumentsCategory.STDOUT);
+	}
+
+	/**
+	 * Log a trace message.
+	 * Only printed if LUCEE_DEBUGGER_DEBUG env var is set.
+	 * Uses STDOUT category in DAP for normal (non-highlighted) display.
+	 */
+	public static void trace(String message) {
+		if (!internalDebug) {
+			return;
+		}
+		if (!logSystemOutput) {
+			String consoleMsg;
+			if (colorLogs) {
+				consoleMsg = ANSI_DIM + PREFIX + "TRACE: " + message + ANSI_RESET;
+			} else {
+				consoleMsg = PREFIX + "TRACE: " + message;
+			}
+			System.out.println(consoleMsg);
+		}
+		sendToDap("TRACE: " + message, OutputEventArgumentsCategory.STDOUT);
+	}
+
+	/**
+	 * Log a warning message.
+	 * Only logged if log level is INFO or higher.
+	 * Uses IMPORTANT category in DAP for highlighted display.
+	 */
+	public static void warn(String message) {
+		if (!LogLevel.INFO.isEnabled(logLevel)) {
+			return;
+		}
+		if (!logSystemOutput) {
+			String consoleMsg;
+			if (colorLogs) {
+				consoleMsg = ANSI_YELLOW + PREFIX + "WARN: " + message + ANSI_RESET;
+			} else {
+				consoleMsg = PREFIX + "WARN: " + message;
+			}
+			System.out.println(consoleMsg);
+		}
+		sendToDap("WARN: " + message, OutputEventArgumentsCategory.IMPORTANT);
+	}
+
+	/**
+	 * Log an exception to the debug console (if logExceptions is enabled).
+	 * Only sends to DAP, not to System.out.
+	 */
+	public static void exception(Throwable t) {
+		if (!logExceptions) {
+			return;
+		}
+		StringBuilder sb = new StringBuilder();
+		sb.append(t.getClass().getSimpleName()).append(": ").append(t.getMessage());
+
+		// Get full CFML stack trace
+		String stackTrace = ExceptionUtil.getCfmlStackTraceOrFallback(t);
+		if (stackTrace != null && !stackTrace.isEmpty()) {
+			for (String line : stackTrace.split("\n")) {
+				if (!line.isEmpty()) {
+					sb.append("\n  at ").append(line);
+				}
+			}
+		} else {
+			sb.append("\n  at unknown");
+		}
+		sendToDap(sb.toString(), OutputEventArgumentsCategory.STDERR);
+	}
+
+	/**
+	 * Forward System.out/err output to DAP client.
+	 * Called by NativeDebuggerListener.onOutput() when logSystemOutput is enabled.
+	 * Does NOT echo to console (would cause infinite loop).
+	 *
+	 * @param text The text that was written
+	 * @param isStdErr true if stderr, false if stdout
+	 */
+	public static void systemOutput(String text, boolean isStdErr) {
+		IDebugProtocolClient client = dapClient;
+		if (client != null) {
+			try {
+				var args = new OutputEventArguments();
+				args.setCategory(isStdErr ? OutputEventArgumentsCategory.STDERR : OutputEventArgumentsCategory.STDOUT);
+				// Pass through as-is - the source already includes newlines
+				args.setOutput(text);
+				client.output(args);
+			} catch (Exception e) {
+				// Silently ignore - can't log here or we'd recurse
+			}
 		}
 	}
 

@@ -32,6 +32,7 @@ public class NativeLuceeVm implements ILuceeVm {
 	private Consumer<Long> stepEventCallback = null;
 	private BiConsumer<Long, DapBreakpointID> breakpointEventCallback = null;
 	private BiConsumer<Long, String> nativeBreakpointEventCallback = null;
+	private Consumer<Long> exceptionEventCallback = null;
 	private Consumer<BreakpointsChangedEvent> breakpointsChangedCallback = null;
 
 	private AtomicInteger breakpointID = new AtomicInteger();
@@ -64,6 +65,13 @@ public class NativeLuceeVm implements ILuceeVm {
 		NativeDebuggerListener.setOnNativeStepCallback(javaThreadId -> {
 			if (stepEventCallback != null) {
 				stepEventCallback.accept(javaThreadId);
+			}
+		});
+
+		// Register native exception callback
+		NativeDebuggerListener.setOnNativeExceptionCallback(javaThreadId -> {
+			if (exceptionEventCallback != null) {
+				exceptionEventCallback.accept(javaThreadId);
 			}
 		});
 	}
@@ -180,7 +188,7 @@ public class NativeLuceeVm implements ILuceeVm {
 			frameCache.put(frame.getId(), frame);
 		}
 
-		Log.debug("getStackTrace: returning " + frames.length + " frames for thread " + threadID);
+		Log.trace("getStackTrace: returning " + frames.length + " frames for thread " + threadID);
 		return frames;
 	}
 
@@ -336,5 +344,16 @@ public class NativeLuceeVm implements ILuceeVm {
 			return Either.Left("Expression evaluation not yet supported in native debugger mode");
 		}
 		return GlobalIDebugManagerHolder.debugManager.evaluate((Long)(long)frameID, expr);
+	}
+
+	@Override
+	public void registerExceptionEventCallback(Consumer<Long> cb) {
+		exceptionEventCallback = cb;
+	}
+
+	@Override
+	public Throwable getExceptionForThread(long threadId) {
+		NativeDebuggerListener.SuspendLocation loc = NativeDebuggerListener.getSuspendLocation(threadId);
+		return loc != null ? loc.exception : null;
 	}
 }

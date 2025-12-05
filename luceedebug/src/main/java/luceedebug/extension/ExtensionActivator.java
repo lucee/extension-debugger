@@ -178,6 +178,8 @@ public class ExtensionActivator {
 			final Method isDapClientConnectedMethod = nativeListenerClass.getMethod("isDapClientConnected");
 			final Method onExceptionMethod = nativeListenerClass.getMethod("onException",
 				pageContextClass, Throwable.class, boolean.class);
+			final Method onOutputMethod = nativeListenerClass.getMethod("onOutput",
+				String.class, boolean.class);
 
 			// Create proxy in Lucee's classloader, delegating to extension's implementation
 			Object listenerProxy = java.lang.reflect.Proxy.newProxyInstance(
@@ -190,7 +192,8 @@ public class ExtensionActivator {
 						case "onResume": return onResumeMethod.invoke(null, args);
 						case "shouldSuspend": return shouldSuspendMethod.invoke(null, args);
 						case "onException": return onExceptionMethod.invoke(null, args);
-						default: return null; // Default methods like onException have defaults
+						case "onOutput": return onOutputMethod.invoke(null, args);
+						default: return null;
 					}
 				}
 			);
@@ -215,7 +218,7 @@ public class ExtensionActivator {
 	 * Shuts down the DAP server to free the port.
 	 */
 	public void finalize() {
-		Log.info("Extension finalizing - shutting down DAP server");
+		Log.debug("Extension finalizing - shutting down DAP server");
 		DapServer.shutdown();
 	}
 }

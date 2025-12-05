@@ -25,6 +25,7 @@ import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
 import org.eclipse.lsp4j.jsonrpc.util.ToStringBuilder;
 
 import luceedebug.coreinject.NativeDebuggerListener;
+import luceedebug.generated.Constants;
 import luceedebug.strong.CanonicalServerAbsPath;
 import luceedebug.strong.RawIdePath;
 
@@ -133,7 +134,23 @@ public class DapServer implements IDebugProtocolServer {
                 event.setDescription(label);
             }
             clientProxy_.stopped(event);
-            Log.info("Sent DAP stopped event for native breakpoint, thread=" + javaThreadId + (label != null ? " label=" + label : ""));
+            Log.debug("Stopped event sent: thread=" + javaThreadId + (label != null ? " label=" + label : ""));
+        });
+
+        // Register native exception callback (Lucee7+ uncaught exception)
+        this.luceeVm_.registerExceptionEventCallback(javaThreadId -> {
+            final int i32_threadID = (int)(long)javaThreadId;
+            var event = new StoppedEventArguments();
+            event.setReason("exception");
+            event.setThreadId(i32_threadID);
+            // Get exception details for the description
+            Throwable ex = luceeVm_.getExceptionForThread(javaThreadId);
+            if (ex != null) {
+                event.setDescription(ex.getClass().getSimpleName() + ": " + ex.getMessage());
+                event.setText(ex.getMessage());
+            }
+            clientProxy_.stopped(event);
+            Log.debug("Sent DAP stopped event for exception, thread=" + javaThreadId + (ex != null ? " exception=" + ex.getClass().getName() : ""));
         });
     }
 
@@ -198,28 +215,9 @@ public class DapServer implements IDebugProtocolServer {
 
                 try {
                     Log.info("Creating DAP entry...");
-                    // Wrap streams with logging
                     var rawIn = socket.getInputStream();
                     var rawOut = socket.getOutputStream();
-                    var loggingIn = new java.io.FilterInputStream(rawIn) {
-                        @Override
-                        public int read() throws java.io.IOException {
-                            int b = super.read();
-                            if (b >= 0) {
-                                System.out.print((char)b);
-                            }
-                            return b;
-                        }
-                        @Override
-                        public int read(byte[] b, int off, int len) throws java.io.IOException {
-                            int n = super.read(b, off, len);
-                            if (n > 0) {
-                                System.out.print("[IN:" + n + "]" + new String(b, off, n, "UTF-8"));
-                            }
-                            return n;
-                        }
-                    };
-                    var dapEntry = create(luceeVm, config, loggingIn, rawOut);
+                    var dapEntry = create(luceeVm, config, rawIn, rawOut);
                     Log.info("DAP launcher created, starting listening...");
                     // Enable DAP output for this client
                     Log.setDapClient(dapEntry.server.clientProxy_);
@@ -272,16 +270,16 @@ public class DapServer implements IDebugProtocolServer {
         Object storedSocket = System.getProperties().get(SOCKET_PROPERTY);
         if (storedSocket instanceof ServerSocket) {
             ServerSocket socket = (ServerSocket) storedSocket;
-            Log.info("shutdown() - found socket in system properties, closing...");
+            Log.debug("shutdown() - found socket in system properties, closing...");
             try {
                 socket.close();
-                Log.info("shutdown() - socket closed");
+                Log.debug("shutdown() - socket closed");
             } catch (Exception e) {
                 Log.error("shutdown() - socket close error", e);
             }
             System.getProperties().remove(SOCKET_PROPERTY);
         } else {
-            Log.info("shutdown() - no socket in system properties");
+            Log.debug("shutdown() - no socket in system properties");
         }
 
         // Also close our local static reference if set
@@ -302,8 +300,7 @@ public class DapServer implements IDebugProtocolServer {
 
     @Override
     public CompletableFuture<Capabilities> initialize(InitializeRequestArguments args) {
-        Log.info("initialize() called with args: " + args);
-        System.out.println("[luceedebug] INITIALIZE CALLED - this should appear in Tomcat logs");
+        Log.debug("initialize() called with args: " + args);
         var c = new Capabilities();
         c.setSupportsEvaluateForHovers(true);
         c.setSupportsConfigurationDoneRequest(true);
@@ -319,7 +316,8 @@ public class DapServer implements IDebugProtocolServer {
         uncaughtFilter.setLabel("Uncaught Exceptions");
         uncaughtFilter.setDescription("Break when an exception is not caught by a try/catch block");
         c.setExceptionBreakpointFilters(new ExceptionBreakpointsFilter[] { uncaughtFilter });
-        Log.info("Returning capabilities with exceptionBreakpointFilters: " + java.util.Arrays.toString(c.getExceptionBreakpointFilters()));
+        c.setSupportsExceptionInfoRequest(true);
+        Log.debug("Returning capabilities with exceptionBreakpointFilters: " + java.util.Arrays.toString(c.getExceptionBreakpointFilters()));
 
         return CompletableFuture.completedFuture(c);
     }
@@ -384,23 +382,68 @@ public class DapServer implements IDebugProtocolServer {
 
     @Override
     public CompletableFuture<Void> attach(Map<String, Object> args) {
+        // Configure logging from launch.json (before other logging)
+        configureLogging(args);
+
         pathTransforms = tryMungePathTransforms(args.get("pathTransforms"));
 
         config_.setStepIntoUdfDefaultValueInitFrames(getBoolOrFalseIfNonBool(args.get("stepIntoUdfDefaultValueInitFrames")));
 
         clientProxy_.initialized();
 
+        // Log version info
+        String luceeVersion = getLuceeVersion();
+        Log.info("luceedebug " + Constants.version + " connected to Lucee " + luceeVersion);
+
         if (pathTransforms.size() == 0) {
-            Log.info("DAP client attached - no path transforms configured");
+            Log.info("No path transforms configured");
         }
         else {
-            Log.info("DAP client attached - path transforms:");
             for (var transform : pathTransforms) {
-                Log.info("  " + transform.asTraceString());
+                Log.info(transform.asTraceString());
+                // Set base path for shortening paths in logs (use first transform's server prefix)
+                if (transform instanceof PrefixPathTransform) {
+                    Config.setBasePath(((PrefixPathTransform)transform).getServerPrefix());
+                }
             }
         }
 
         return CompletableFuture.completedFuture(null);
+    }
+
+    /**
+     * Configure logging from launch.json settings.
+     * Supports: logColor (boolean), logLevel (error|info|debug), logExceptions (boolean), logSystemOutput (boolean)
+     */
+    private void configureLogging(Map<String, Object> args) {
+        lucee.runtime.util.Cast caster = lucee.loader.engine.CFMLEngineFactory.getInstance().getCastUtil();
+
+        // logColor - default true
+        Log.setColorLogs(caster.toBooleanValue(args.get("logColor"), true));
+
+        // logLevel - error, info, debug
+        Object logLevel = args.get("logLevel");
+        if (logLevel instanceof String) {
+            String level = ((String) logLevel).toLowerCase();
+            switch (level) {
+                case "error":
+                    Log.setLogLevel(Log.LogLevel.ERROR);
+                    break;
+                case "debug":
+                    Log.setLogLevel(Log.LogLevel.DEBUG);
+                    break;
+                case "info":
+                default:
+                    Log.setLogLevel(Log.LogLevel.INFO);
+                    break;
+            }
+        }
+
+        // logExceptions - default false
+        Log.setLogExceptions(caster.toBooleanValue(args.get("logExceptions"), false));
+
+        // logSystemOutput - default false
+        NativeDebuggerListener.setLogSystemOutput(caster.toBooleanValue(args.get("logSystemOutput"), false));
     }
 
     static final Pattern threadNamePrefixAndDigitSuffix = Pattern.compile("^(.+?)(\\d+)$");
@@ -455,7 +498,7 @@ public class DapServer implements IDebugProtocolServer {
             final var source = new Source();
             String rawPath = cfFrame.getSourceFilePath();
             String transformedPath = applyPathTransformsServerToIde(rawPath);
-            Log.info("stackTrace: raw=" + rawPath + " -> transformed=" + transformedPath);
+            Log.debug("stackTrace: raw=" + rawPath + " -> transformed=" + transformedPath);
             source.setPath(transformedPath);
 
             final var lspFrame = new org.eclipse.lsp4j.debug.StackFrame();
@@ -566,7 +609,7 @@ public class DapServer implements IDebugProtocolServer {
 	public CompletableFuture<SetExceptionBreakpointsResponse> setExceptionBreakpoints(SetExceptionBreakpointsArguments args) {
 		// Check if "uncaught" is in the filters
 		String[] filters = args.getFilters();
-		Log.info("setExceptionBreakpoints: filters=" + java.util.Arrays.toString(filters));
+		Log.debug("setExceptionBreakpoints: filters=" + java.util.Arrays.toString(filters));
 		boolean breakOnUncaught = false;
 		if (filters != null) {
 			for (String filter : filters) {
@@ -577,13 +620,54 @@ public class DapServer implements IDebugProtocolServer {
 			}
 		}
 		NativeDebuggerListener.setBreakOnUncaughtExceptions(breakOnUncaught);
-		Log.info("setExceptionBreakpoints: uncaught=" + breakOnUncaught);
 		return CompletableFuture.completedFuture(new SetExceptionBreakpointsResponse());
+	}
+
+	/**
+	 * Returns exception details when stopped due to an exception.
+	 * VSCode calls this after receiving a stopped event with reason="exception".
+	 */
+	@Override
+	public CompletableFuture<ExceptionInfoResponse> exceptionInfo(ExceptionInfoArguments args) {
+		Log.debug("exceptionInfo() called for thread " + args.getThreadId());
+		Throwable ex = luceeVm_.getExceptionForThread(args.getThreadId());
+		var response = new ExceptionInfoResponse();
+		if (ex != null) {
+			response.setExceptionId(ex.getClass().getName());
+			response.setDescription(ex.getMessage());
+			response.setBreakMode(ExceptionBreakMode.UNHANDLED);
+			// Build detailed stack trace
+			var details = new ExceptionDetails();
+			// Include detail if available (Lucee PageException has getDetail())
+			String message = ex.getMessage();
+			String detail = ExceptionUtil.getDetail(ex);
+			if (detail != null && !detail.isEmpty()) {
+				message = message + "\n\nDetail: " + detail;
+			}
+			details.setMessage(message);
+			details.setTypeName(ex.getClass().getName());
+			details.setStackTrace(ExceptionUtil.getCfmlStackTraceOrFallback(ex));
+			// Include inner exception if present
+			if (ex.getCause() != null) {
+				var inner = new ExceptionDetails();
+				inner.setMessage(ex.getCause().getMessage());
+				inner.setTypeName(ex.getCause().getClass().getName());
+				details.setInnerException(new ExceptionDetails[] { inner });
+			}
+			response.setDetails(details);
+			Log.debug("exceptionInfo() returning: " + ex.getClass().getName() + " - " + ex.getMessage());
+		} else {
+			response.setExceptionId("unknown");
+			response.setDescription("No exception information available");
+			response.setBreakMode(ExceptionBreakMode.UNHANDLED);
+			Log.debug("exceptionInfo() - no exception found for thread");
+		}
+		return CompletableFuture.completedFuture(response);
 	}
 
     /**
      * Can we disable the UI for this in the client plugin?
-     * 
+     *
      * @unsupported
      */
 	public CompletableFuture<Void> pause(PauseArguments args) {
@@ -905,7 +989,9 @@ public class DapServer implements IDebugProtocolServer {
     static private AtomicLong anonymousID = new AtomicLong();
 
     public CompletableFuture<EvaluateResponse> evaluate(EvaluateArguments args) {
+        Log.debug("evaluate() called: expression=" + args.getExpression() + ", context=" + args.getContext() + ", frameId=" + args.getFrameId());
         if (args.getFrameId() == null) {
+            Log.info("evaluate() - frameId is null, returning error");
             final var exceptionalResult = new CompletableFuture<EvaluateResponse>();
             final var error = new ResponseError(ResponseErrorCode.InvalidRequest, "missing frameID", null);
             exceptionalResult.completeExceptionally(new ResponseErrorException(error));
@@ -916,6 +1002,7 @@ public class DapServer implements IDebugProtocolServer {
                 .evaluate(args.getFrameId(), args.getExpression())
                 .collapse(
                     errMsg -> {
+                        Log.info("evaluate() - error: " + errMsg);
                         final var exceptionalResult = new CompletableFuture<EvaluateResponse>();
                         final var error = new ResponseError(ResponseErrorCode.InternalError, errMsg, null);
                         exceptionalResult.completeExceptionally(new ResponseErrorException(error));
@@ -928,12 +1015,14 @@ public class DapServer implements IDebugProtocolServer {
                                 final var response = new EvaluateResponse();
                                 if (value == null) {
                                     // some problem, or we tried to get a function from a cfc maybe? this needs work.
+                                    Log.info("evaluate() - success (object) but value is null, returning ???");
                                     response.setVariablesReference(0);
                                     response.setIndexedVariables(0);
                                     response.setNamedVariables(0);
                                     response.setResult("???");
                                 }
                                 else {
+                                    Log.info("evaluate() - success (object): " + value.getValue());
                                     response.setVariablesReference((int)(long)value.getVariablesReference());
                                     response.setIndexedVariables(value.getIndexedVariables());
                                     response.setNamedVariables(value.getNamedVariables());
@@ -943,6 +1032,7 @@ public class DapServer implements IDebugProtocolServer {
                                 return CompletableFuture.completedFuture(response);
                             },
                             string -> {
+                                Log.info("evaluate() - success (string): " + string);
                                 final var response = new EvaluateResponse();
                                 response.setResult(string);
                                 return CompletableFuture.completedFuture(response);
@@ -950,5 +1040,17 @@ public class DapServer implements IDebugProtocolServer {
                     }
                 );
         }
-    }    
+    }
+
+    /**
+     * Get the Lucee version string (e.g., "7.0.1.7-ALPHA").
+     */
+    private static String getLuceeVersion() {
+        try {
+            lucee.Info info = lucee.loader.engine.CFMLEngineFactory.getInstance().getInfo();
+            return info.getVersion().toString();
+        } catch (Exception e) {
+            return "unknown";
+        }
+    }
 }

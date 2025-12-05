@@ -373,7 +373,6 @@ public class NativeDebugFrame implements IDebugFrame {
 			getDisplayPathMethod = pageSourceClass.getMethod( "getDisplayPath" );
 
 			nativeFrameSupportAvailable = true;
-			Log.info( "Native Lucee7 debugger frame support detected and enabled" );
 			return true;
 
 		} catch ( Throwable e ) {
@@ -438,9 +437,9 @@ public class NativeDebugFrame implements IDebugFrame {
 
 			// If no frames from native stack, try to create synthetic frame from suspend location
 			if ( result.isEmpty() && threadId >= 0 ) {
-				Log.debug( "Checking suspend location for thread " + threadId + ": " + (location != null ? location.file + ":" + location.line : "null") );
+				Log.trace( "Checking suspend location for thread " + threadId + ": " + (location != null ? location.file + ":" + location.line : "null") );
 				if ( location != null && location.file != null && location.line > 0 ) {
-					Log.debug( "Creating synthetic frame for top-level code: " + location.file + ":" + location.line + (location.label != null ? " label=" + location.label : "") );
+					Log.trace( "Creating synthetic frame for top-level code: " + location.file + ":" + location.line + (location.label != null ? " label=" + location.label : "") );
 					result.add( new NativeDebugFrame( pageContext, valTracker, location.file, location.line, location.label, exception ) );
 				}
 			}
