@@ -2,11 +2,9 @@ package luceedebug;
 
 import java.lang.instrument.*;
 import java.lang.reflect.Method;
+import java.security.ProtectionDomain;
 
 import org.objectweb.asm.*;
-
-import java.security.ProtectionDomain;
-import java.util.ArrayList;
 
 public class LuceeTransformer implements ClassFileTransformer {
     private final String jdwpHost;
@@ -87,9 +85,6 @@ public class LuceeTransformer implements ClassFileTransformer {
 
                         System.out.println("[luceedebug] Loaded " + GlobalIDebugManagerHolder.debugManager + " with ClassLoader '" + GlobalIDebugManagerHolder.debugManager.getClass().getClassLoader() + "'");
                         GlobalIDebugManagerHolder.debugManager.spawnWorker(config, jdwpHost, jdwpPort, debugHost, debugPort);
-
-                        // Register native debugger listener for Lucee7+ native breakpoints
-                        registerNativeDebuggerListener(loader);
                     }
                     catch (Throwable e) {
                         e.printStackTrace();
@@ -240,66 +235,4 @@ public class LuceeTransformer implements ClassFileTransformer {
         }
     }
 
-    /**
-     * Register our NativeDebuggerListener with Lucee's DebuggerRegistry (if available).
-     * This enables native breakpoints in Lucee7+ without JDWP instrumentation.
-     *
-     * The listener is registered via reflection since DebuggerListener/DebuggerRegistry
-     * are in Lucee core, not the loader.
-     */
-    private void registerNativeDebuggerListener(ClassLoader luceeLoader) {
-        try {
-            // Check if DebuggerRegistry exists (Lucee7+ feature)
-            Class<?> registryClass;
-            try {
-                registryClass = luceeLoader.loadClass("lucee.runtime.debug.DebuggerRegistry");
-            } catch (ClassNotFoundException e) {
-                System.out.println("[luceedebug] DebuggerRegistry not found - native breakpoints not available (pre-Lucee7)");
-                return;
-            }
-
-            // Load the DebuggerListener interface
-            Class<?> listenerInterface = luceeLoader.loadClass("lucee.runtime.debug.DebuggerListener");
-
-            // Load our NativeDebuggerListener class (already injected into core loader)
-            Class<?> nativeListenerClass = GlobalIDebugManagerHolder.luceeCoreLoader.loadClass("luceedebug.coreinject.NativeDebuggerListener");
-            Class<?> pageContextClass = luceeLoader.loadClass("lucee.runtime.PageContext");
-
-            // Cache method lookups - shouldSuspend is on the hot path (called every line)
-            final Method onSuspendMethod = nativeListenerClass.getMethod("onSuspend",
-                pageContextClass, String.class, int.class, String.class);
-            final Method onResumeMethod = nativeListenerClass.getMethod("onResume", pageContextClass);
-            final Method shouldSuspendMethod = nativeListenerClass.getMethod("shouldSuspend",
-                pageContextClass, String.class, int.class);
-
-            // Create a dynamic proxy that implements DebuggerListener and delegates to our static methods
-            Object listenerProxy = java.lang.reflect.Proxy.newProxyInstance(
-                luceeLoader,
-                new Class<?>[] { listenerInterface },
-                (proxy, method, args) -> {
-                    String methodName = method.getName();
-                    switch (methodName) {
-                        case "onSuspend":
-                            return onSuspendMethod.invoke(null, args);
-                        case "onResume":
-                            return onResumeMethod.invoke(null, args);
-                        case "shouldSuspend":
-                            return shouldSuspendMethod.invoke(null, args);
-                        default:
-                            throw new UnsupportedOperationException("Unknown method: " + methodName);
-                    }
-                }
-            );
-
-            // Register the listener
-            Method setListener = registryClass.getMethod("setListener", listenerInterface);
-            setListener.invoke(null, listenerProxy);
-
-            System.out.println("[luceedebug] Registered native debugger listener for Lucee7+ breakpoints");
-        } catch (Throwable e) {
-            System.out.println("[luceedebug] Failed to register native debugger listener: " + e.getMessage());
-            e.printStackTrace();
-            // Don't exit - native breakpoints are optional, JDWP breakpoints still work
-        }
-    }
 }

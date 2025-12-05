@@ -185,6 +185,10 @@
                 "type": "boolean",
                 "default": false,
                 "description": "Show System.out/err in the debug console."
+              },
+              "secret": {
+                "type": "string",
+                "description": "Secret that must match LUCEE_DEBUGGER_SECRET environment variable on the server."
               }
             }
           }
@@ -195,14 +199,15 @@
             "request": "attach",
             "name": "Attach to server",
             "hostName": "localhost",
+            "port": 9999,
+            "secret": "",
             "pathTransforms": [
               {
                 "idePrefix": "${workspaceFolder}",
                 "serverPrefix": "/app"
               }
             ],
-            "pathSeparator": "auto",
-            "port": 8000
+            "pathSeparator": "auto"
           }
         ],
         "configurationSnippets": [
@@ -214,14 +219,15 @@
               "request": "attach",
               "name": "Attach to server",
               "hostName": "localhost",
+              "port": 9999,
+              "secret": "",
               "pathTransforms": [
                 {
                   "idePrefix": "^\"\\${workspaceFolder}\"",
                   "serverPrefix": "/app"
                 }
               ],
-              "pathSeparator": "auto",
-              "port": 8000
+              "pathSeparator": "auto"
             }
           }
         ],

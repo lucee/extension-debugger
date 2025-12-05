@@ -186,16 +186,6 @@ public class Agent {
             result.put("luceedebug.coreinject.frame.Frame$FrameContext", 1);
             result.put("luceedebug.coreinject.frame.Frame$FrameContext$SupplierOrNull", 1);
             result.put("luceedebug.coreinject.frame.DummyFrame", 1);
-            result.put("luceedebug.coreinject.frame.NativeDebugFrame", 1);
-
-            // Native debugger listener for Lucee7+ native breakpoints
-            result.put("luceedebug.coreinject.NativeDebuggerListener", 0);
-            result.put("luceedebug.coreinject.NativeDebuggerListener$1", 0);
-            result.put("luceedebug.coreinject.NativeDebuggerListener$StepState", 0);
-            result.put("luceedebug.coreinject.StepMode", 0);
-
-            // Native-only LuceeVm implementation (no JDWP)
-            result.put("luceedebug.coreinject.NativeLuceeVm", 0);
 
             return result;
         }

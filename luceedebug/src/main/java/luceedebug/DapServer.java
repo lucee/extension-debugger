@@ -214,21 +214,18 @@ public class DapServer implements IDebugProtocolServer {
                 luceedebug.coreinject.NativeDebuggerListener.setDapClientConnected(true);
 
                 try {
-                    Log.info("Creating DAP entry...");
                     var rawIn = socket.getInputStream();
                     var rawOut = socket.getOutputStream();
                     var dapEntry = create(luceeVm, config, rawIn, rawOut);
-                    Log.info("DAP launcher created, starting listening...");
                     // Enable DAP output for this client
                     Log.setDapClient(dapEntry.server.clientProxy_);
                     var future = dapEntry.launcher.startListening();
-                    Log.info("DAP launcher started, waiting for connection to close...");
                     try {
                         future.get(); // block until the connection closes
                     } catch (Exception e) {
                         Log.error("Launcher future exception", e);
                     }
-                    Log.info("DAP client disconnected from " + clientAddr + ":" + clientPort);
+                    Log.debug("DAP client disconnected from " + clientAddr + ":" + clientPort);
                 } catch (Exception e) {
                     Log.error("DAP client error: " + e.getClass().getName(), e);
                 } finally {
@@ -236,7 +233,7 @@ public class DapServer implements IDebugProtocolServer {
                     luceedebug.coreinject.NativeDebuggerListener.setDapClientConnected(false);
                     Log.setDapClient(null); // Disable DAP output
                     try { socket.close(); } catch (Exception ignored) {}
-                    Log.info("DAP client socket closed for " + clientAddr + ":" + clientPort);
+                    Log.debug("DAP client socket closed for " + clientAddr + ":" + clientPort);
                 }
 
                 logger.finest("debugger connection closed");
@@ -264,15 +261,17 @@ public class DapServer implements IDebugProtocolServer {
     /**
      * Shutdown the DAP server. Called on extension uninstall/reinstall.
      * Uses System.getProperties() to find socket from previous classloaders.
+     * Uses reflection to avoid OSGi classloader identity issues.
      */
     public static void shutdown() {
         // Try to get socket from JVM-wide properties (survives classloader changes)
         Object storedSocket = System.getProperties().get(SOCKET_PROPERTY);
-        if (storedSocket instanceof ServerSocket) {
-            ServerSocket socket = (ServerSocket) storedSocket;
-            Log.debug("shutdown() - found socket in system properties, closing...");
+        if (storedSocket != null) {
+            // Use reflection - instanceof may fail across OSGi classloaders
+            Log.debug("shutdown() - found socket in system properties, closing via reflection...");
             try {
-                socket.close();
+                java.lang.reflect.Method closeMethod = storedSocket.getClass().getMethod("close");
+                closeMethod.invoke(storedSocket);
                 Log.debug("shutdown() - socket closed");
             } catch (Exception e) {
                 Log.error("shutdown() - socket close error", e);
@@ -282,7 +281,7 @@ public class DapServer implements IDebugProtocolServer {
             Log.debug("shutdown() - no socket in system properties");
         }
 
-        // Also close our local static reference if set
+        // Also close our local static reference if set (same classloader case)
         if (activeServerSocket != null) {
             try {
                 activeServerSocket.close();
@@ -385,15 +384,21 @@ public class DapServer implements IDebugProtocolServer {
         // Configure logging from launch.json (before other logging)
         configureLogging(args);
 
+        // Log version info first
+        String luceeVersion = getLuceeVersion();
+        Log.info("luceedebug " + Constants.version + " connected to Lucee " + luceeVersion);
+
+        // Validate secret from launch.json
+        if (!validateSecret(args)) {
+            clientProxy_.terminated(new org.eclipse.lsp4j.debug.TerminatedEventArguments());
+            return CompletableFuture.completedFuture(null);
+        }
+
         pathTransforms = tryMungePathTransforms(args.get("pathTransforms"));
 
         config_.setStepIntoUdfDefaultValueInitFrames(getBoolOrFalseIfNonBool(args.get("stepIntoUdfDefaultValueInitFrames")));
 
         clientProxy_.initialized();
-
-        // Log version info
-        String luceeVersion = getLuceeVersion();
-        Log.info("luceedebug " + Constants.version + " connected to Lucee " + luceeVersion);
 
         if (pathTransforms.size() == 0) {
             Log.info("No path transforms configured");
@@ -409,6 +414,62 @@ public class DapServer implements IDebugProtocolServer {
         }
 
         return CompletableFuture.completedFuture(null);
+    }
+
+    // Track whether secret has been validated for this session
+    private boolean secretValidated = false;
+
+    /**
+     * Validate the secret from launch.json.
+     * Works for both native mode (via ExtensionActivator) and agent mode (direct validation).
+     *
+     * @param args The attach arguments containing the secret
+     * @return true if secret is valid, false otherwise
+     */
+    private boolean validateSecret(Map<String, Object> args) {
+        Object secretObj = args.get("secret");
+        String clientSecret = (secretObj instanceof String) ? ((String) secretObj).trim() : null;
+
+        if (clientSecret == null || clientSecret.isEmpty()) {
+            Log.error("No secret provided in launch.json");
+            return false;
+        }
+
+        // Try native mode first (Lucee 7.1+ extension)
+        try {
+            Class<?> activatorClass = Class.forName("luceedebug.extension.ExtensionActivator");
+            java.lang.reflect.Method registerMethod = activatorClass.getMethod("registerListener", String.class);
+            Boolean registered = (Boolean) registerMethod.invoke(null, clientSecret);
+            if (registered) {
+                secretValidated = true;
+                return true;
+            } else {
+                Log.error("Failed to register debugger - invalid secret");
+                return false;
+            }
+        } catch (ClassNotFoundException e) {
+            // Not in native mode, fall through to agent mode validation
+        } catch (Exception e) {
+            Log.error("Error calling ExtensionActivator.registerListener", e);
+            return false;
+        }
+
+        // Agent mode - validate secret directly
+        String expectedSecret = EnvUtil.getDebuggerSecret();
+        if (expectedSecret == null) {
+            // No secret configured on server - allow any secret for backwards compatibility?
+            // No - require secret to be set for security
+            Log.error("LUCEE_DEBUGGER_SECRET not set on server");
+            return false;
+        }
+
+        if (!expectedSecret.equals(clientSecret)) {
+            Log.error("Invalid secret");
+            return false;
+        }
+
+        secretValidated = true;
+        return true;
     }
 
     /**
@@ -561,9 +622,16 @@ public class DapServer implements IDebugProtocolServer {
 
     @Override
     public CompletableFuture<SetBreakpointsResponse> setBreakpoints(SetBreakpointsArguments args) {
+        // Don't accept breakpoints if secret wasn't validated
+        if (!secretValidated) {
+            var response = new SetBreakpointsResponse();
+            response.setBreakpoints(new Breakpoint[0]);
+            return CompletableFuture.completedFuture(response);
+        }
+
         final var idePath = new RawIdePath(args.getSource().getPath());
         final var serverAbsPath = new CanonicalServerAbsPath(applyPathTransformsIdeToCf(args.getSource().getPath()));
-        
+
         logger.finest("bp for " + idePath.get() + " -> " + serverAbsPath.get());
 
         final int size = args.getBreakpoints().length;
@@ -578,7 +646,7 @@ public class DapServer implements IDebugProtocolServer {
         for (IBreakpoint bp : luceeVm_.bindBreakpoints(idePath, serverAbsPath, lines, exprs)) {
             result.add(map_cfBreakpoint_to_lsp4jBreakpoint(bp));
         }
-        
+
         var response = new SetBreakpointsResponse();
         response.setBreakpoints(result.toArray(len -> new Breakpoint[len]));
 
@@ -677,6 +745,7 @@ public class DapServer implements IDebugProtocolServer {
 
     @Override
 	public CompletableFuture<Void> disconnect(DisconnectArguments args) {
+        Log.info("DAP client disconnected");
         luceeVm_.clearAllBreakpoints();
         luceeVm_.continueAll();
 		return CompletableFuture.completedFuture(null);

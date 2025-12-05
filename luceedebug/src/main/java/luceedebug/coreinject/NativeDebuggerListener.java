@@ -34,6 +34,13 @@ enum StepMode {
 public class NativeDebuggerListener {
 
 	/**
+	 * Name for this debugger (shown in Lucee logs).
+	 */
+	public static String getName() {
+		return NativeDebuggerListener.class.getName();
+	}
+
+	/**
 	 * Breakpoint storage - parallel arrays for fast lookup.
 	 * Writers synchronize on breakpointLock, readers just access the arrays.
 	 * The volatile hasSuspendConditions provides the memory barrier for visibility.
@@ -336,7 +343,7 @@ public class NativeDebuggerListener {
 			rebuildBreakpointBounds();
 		}
 		updateHasSuspendConditions();
-		Log.info("Breakpoints cleared: " + Config.shortenPath(file));
+		Log.debug("Breakpoints cleared: " + Config.shortenPath(file));
 	}
 
 	/**
@@ -352,7 +359,7 @@ public class NativeDebuggerListener {
 			bpMaxPathLen = 0;
 		}
 		updateHasSuspendConditions();
-		Log.info("Breakpoints cleared: all");
+		Log.debug("Breakpoints cleared: all");
 	}
 
 	/**
@@ -574,8 +581,35 @@ public class NativeDebuggerListener {
 	 */
 	public static void setDapClientConnected(boolean connected) {
 		dapClientConnected = connected;
+		if (!connected) {
+			onClientDisconnect();
+		}
 		updateHasSuspendConditions();
 		Log.info("DAP client connected: " + connected);
+	}
+
+	/**
+	 * Clean up state when DAP client disconnects.
+	 * Resumes any suspended threads to prevent deadlocks.
+	 */
+	private static void onClientDisconnect() {
+		// Resume any suspended threads so they're not stuck forever
+		resumeAllNativeThreads();
+
+		// Clear stepping state
+		steppingThreads.clear();
+
+		// Clear pending exceptions
+		pendingExceptions.clear();
+
+		// Reset exception settings
+		breakOnUncaughtExceptions = false;
+		logSystemOutput = false;
+
+		// Note: We intentionally keep breakpoints - they'll be inactive
+		// since dapClientConnected=false, and will be replaced on next connect
+
+		Log.info("DAP client disconnected - cleanup complete");
 	}
 
 	/**
@@ -602,7 +636,6 @@ public class NativeDebuggerListener {
 	public static void setLogSystemOutput(boolean enabled) {
 		logSystemOutput = enabled;
 		Log.setLogSystemOutput(enabled);
-		Log.info("Log system output: " + enabled);
 	}
 
 	/**
