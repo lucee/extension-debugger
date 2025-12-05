@@ -33,6 +33,7 @@ public class NativeLuceeVm implements ILuceeVm {
 	private BiConsumer<Long, DapBreakpointID> breakpointEventCallback = null;
 	private BiConsumer<Long, String> nativeBreakpointEventCallback = null;
 	private Consumer<Long> exceptionEventCallback = null;
+	private Consumer<Long> pauseEventCallback = null;
 	private Consumer<BreakpointsChangedEvent> breakpointsChangedCallback = null;
 
 	private AtomicInteger breakpointID = new AtomicInteger();
@@ -74,6 +75,13 @@ public class NativeLuceeVm implements ILuceeVm {
 				exceptionEventCallback.accept(javaThreadId);
 			}
 		});
+
+		// Register native pause callback
+		NativeDebuggerListener.setOnNativePauseCallback(javaThreadId -> {
+			if (pauseEventCallback != null) {
+				pauseEventCallback.accept(javaThreadId);
+			}
+		});
 	}
 
 	private DapBreakpointID nextDapBreakpointID() {
@@ -104,6 +112,11 @@ public class NativeLuceeVm implements ILuceeVm {
 	}
 
 	// ========== Thread operations ==========
+
+	// Virtual thread ID for "All Threads" - used when no specific thread is targeted
+	// Thread ID 0 means "all threads" in DAP, but VSCode needs a visible thread to send pause
+	// We use 1 as a safe ID that won't conflict with real Java thread IDs (which start much higher)
+	private static final long ALL_THREADS_VIRTUAL_ID = 1;
 
 	@Override
 	public ThreadInfo[] getThreadListing() {
@@ -160,6 +173,13 @@ public class NativeLuceeVm implements ILuceeVm {
 			}
 		} catch (Exception e) {
 			Log.error("Error getting thread listing", e);
+		}
+
+		// Always show a virtual "All Threads" entry so VSCode has something to target with pause
+		// This allows pause to work even when no specific request thread is visible
+		// When paused with this ID, all CFML threads will pause at their next instrumentation point
+		if (!seenThreadIds.contains(ALL_THREADS_VIRTUAL_ID)) {
+			result.add(0, new ThreadInfo(ALL_THREADS_VIRTUAL_ID, "All CFML Threads"));
 		}
 
 		Log.debug("Thread listing: " + result.size() + " threads");
@@ -349,6 +369,16 @@ public class NativeLuceeVm implements ILuceeVm {
 	@Override
 	public void registerExceptionEventCallback(Consumer<Long> cb) {
 		exceptionEventCallback = cb;
+	}
+
+	@Override
+	public void registerPauseEventCallback(Consumer<Long> cb) {
+		pauseEventCallback = cb;
+	}
+
+	@Override
+	public void pause(long threadID) {
+		NativeDebuggerListener.requestPause(threadID);
 	}
 
 	@Override

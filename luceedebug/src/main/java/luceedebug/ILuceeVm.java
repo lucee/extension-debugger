@@ -66,6 +66,13 @@ public interface ILuceeVm {
     public void stepOver(long threadID);
     public void stepOut(long threadID);
 
+    /**
+     * Request a thread to pause at the next CFML line.
+     * In native mode, this is cooperative - the thread pauses at the next instrumentation point.
+     * @param threadID The thread ID to pause
+     */
+    public void pause(long threadID);
+
 
     public void clearAllBreakpoints();
 
@@ -91,6 +98,12 @@ public interface ILuceeVm {
      * Called with Java thread ID when a thread stops due to an uncaught exception.
      */
     public void registerExceptionEventCallback(java.util.function.Consumer<Long> cb);
+
+    /**
+     * Register callback for pause events (native mode only).
+     * Called with Java thread ID when a thread stops due to user pause request.
+     */
+    public void registerPauseEventCallback(java.util.function.Consumer<Long> cb);
 
     /**
      * Get the exception that caused a thread to suspend.

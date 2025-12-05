@@ -152,6 +152,16 @@ public class DapServer implements IDebugProtocolServer {
             clientProxy_.stopped(event);
             Log.debug("Sent DAP stopped event for exception, thread=" + javaThreadId + (ex != null ? " exception=" + ex.getClass().getName() : ""));
         });
+
+        // Register native pause callback (user clicked pause button)
+        this.luceeVm_.registerPauseEventCallback(javaThreadId -> {
+            final int i32_threadID = (int)(long)javaThreadId;
+            var event = new StoppedEventArguments();
+            event.setReason("pause");
+            event.setThreadId(i32_threadID);
+            clientProxy_.stopped(event);
+            Log.debug("Sent DAP stopped event for pause, thread=" + javaThreadId);
+        });
     }
 
     static class DapEntry {
@@ -734,12 +744,17 @@ public class DapServer implements IDebugProtocolServer {
 	}
 
     /**
-     * Can we disable the UI for this in the client plugin?
-     *
-     * @unsupported
+     * Pause a running thread. In native mode, this is cooperative - the thread
+     * will pause at the next CFML instrumentation point (next line of CFML code).
+     * Won't pause threads stuck in pure Java code (JDBC, HTTP, sleep, etc.).
      */
+	@Override
 	public CompletableFuture<Void> pause(PauseArguments args) {
-        // set success false?
+		long threadId = args.getThreadId();
+		Log.info("pause() called for thread " + threadId);
+		// Thread ID 0 means "pause all threads" - this happens when user clicks
+		// pause button without a specific thread selected
+		luceeVm_.pause(threadId);
 		return CompletableFuture.completedFuture(null);
 	}
 

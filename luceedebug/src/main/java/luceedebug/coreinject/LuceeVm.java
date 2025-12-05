@@ -1185,6 +1185,16 @@ public class LuceeVm implements ILuceeVm {
         // no-op for JDWP mode
     }
 
+    public void registerPauseEventCallback(Consumer<Long> cb) {
+        // no-op for JDWP mode - could use ThreadReference.suspend() but not implemented
+    }
+
+    public void pause(long threadID) {
+        // TODO: Could use ThreadReference.suspend() for JDWP mode
+        // For now, just log that it's not supported
+        System.out.println("[luceedebug] pause() not implemented for JDWP mode");
+    }
+
     public Throwable getExceptionForThread(long threadId) {
         // JDWP mode doesn't use NativeDebuggerListener for exceptions
         return null;

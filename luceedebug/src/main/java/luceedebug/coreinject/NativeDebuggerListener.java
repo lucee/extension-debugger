@@ -153,12 +153,30 @@ public class NativeDebuggerListener {
 	private static final ConcurrentHashMap<Long, StepState> steppingThreads = new ConcurrentHashMap<>();
 
 	/**
+	 * Threads that have been requested to pause.
+	 * Checked in shouldSuspend() - when a thread is in this set it will pause at the next CFML line.
+	 */
+	private static final ConcurrentHashMap<Long, Boolean> threadsToPause = new ConcurrentHashMap<>();
+
+	/**
+	 * Threads that suspended due to a pause request.
+	 * Set in shouldSuspend() when consuming a pause request, consumed in onSuspend().
+	 */
+	private static final ConcurrentHashMap<Long, Boolean> pausedThreads = new ConcurrentHashMap<>();
+
+	/**
+	 * Callback to notify when a thread pauses due to user-initiated pause request.
+	 * Called with Java thread ID. Used for "pause" stop reason in DAP.
+	 */
+	private static volatile Consumer<Long> onNativePauseCallback = null;
+
+	/**
 	 * Update hasSuspendConditions flag based on current state.
-	 * Called whenever breakpoints, exception settings, or stepping state changes.
+	 * Called whenever breakpoints, exception settings, stepping, or pause state changes.
 	 */
 	private static void updateHasSuspendConditions() {
 		hasSuspendConditions = dapClientConnected &&
-			(bpLines.length > 0 || breakOnUncaughtExceptions || !steppingThreads.isEmpty());
+			(bpLines.length > 0 || breakOnUncaughtExceptions || !steppingThreads.isEmpty() || !threadsToPause.isEmpty());
 	}
 
 	/**
@@ -229,6 +247,14 @@ public class NativeDebuggerListener {
 	 */
 	public static void setOnNativeExceptionCallback(Consumer<Long> callback) {
 		onNativeExceptionCallback = callback;
+	}
+
+	/**
+	 * Set the callback for native pause events.
+	 * LuceeVm should register this to receive notifications and send DAP pause events.
+	 */
+	public static void setOnNativePauseCallback(Consumer<Long> callback) {
+		onNativePauseCallback = callback;
 	}
 
 	/**
@@ -461,6 +487,49 @@ public class NativeDebuggerListener {
 		}
 	}
 
+	// ========== Pause methods ==========
+
+	/**
+	 * Virtual thread ID for "All Threads" - used when no specific thread is targeted.
+	 * Thread ID 0 means "all threads" in DAP, and we also use 1 as an alias for the
+	 * "All CFML Threads" entry shown in the VSCode threads panel.
+	 * Must match ALL_THREADS_VIRTUAL_ID in NativeLuceeVm.
+	 */
+	private static final long ALL_THREADS_VIRTUAL_ID = 1;
+
+	/**
+	 * Request a thread to pause at the next CFML line.
+	 * The thread will suspend cooperatively when it hits the next instrumentation point.
+	 * @param threadId The Java thread ID to pause, or 0/1 to pause all threads
+	 */
+	public static void requestPause(long threadId) {
+		if (threadId == 0 || threadId == ALL_THREADS_VIRTUAL_ID) {
+			// Pause all - we set a flag that shouldSuspend() will check for any thread
+			threadsToPause.put(0L, Boolean.TRUE);
+		} else {
+			threadsToPause.put(threadId, Boolean.TRUE);
+		}
+		updateHasSuspendConditions();
+		Log.info("Pause requested for thread: " + (threadId == 0 || threadId == ALL_THREADS_VIRTUAL_ID ? "all" : threadId));
+	}
+
+	/**
+	 * Check if a thread has a pending pause request.
+	 * Clears the request after checking (pause is consumed).
+	 */
+	private static boolean consumePauseRequest(long threadId) {
+		// Check for specific thread first, then "pause all"
+		if (threadsToPause.remove(threadId) != null) {
+			updateHasSuspendConditions();
+			return true;
+		}
+		if (threadsToPause.remove(0L) != null) {
+			updateHasSuspendConditions();
+			return true;
+		}
+		return false;
+	}
+
 	// ========== Stepping methods ==========
 
 	/**
@@ -513,7 +582,10 @@ public class NativeDebuggerListener {
 		StepState stepState = steppingThreads.remove(threadId);
 		boolean wasStepping = (stepState != null);
 
-		// Check if we hit a breakpoint (breakpoint wins over step)
+		// Check if we paused due to user pause request
+		boolean wasPaused = pausedThreads.remove(threadId) != null;
+
+		// Check if we hit a breakpoint (breakpoint wins over step/pause)
 		boolean hitBreakpoint = hasBreakpoint(file, line);
 
 		// Check if there's a pending exception for this thread (from onException)
@@ -527,7 +599,7 @@ public class NativeDebuggerListener {
 		// Include the exception if we're suspending due to one
 		suspendLocations.put(threadId, new SuspendLocation(file, line, label, pendingException));
 
-		// Fire appropriate callback - exception takes precedence, then breakpoint, then step
+		// Fire appropriate callback - exception takes precedence, then breakpoint, then pause, then step
 		if (pendingException != null) {
 			// Stopped due to uncaught exception
 			Consumer<Long> callback = onNativeExceptionCallback;
@@ -539,6 +611,12 @@ public class NativeDebuggerListener {
 			BiConsumer<Long, String> callback = onNativeSuspendCallback;
 			if (callback != null) {
 				callback.accept(threadId, null);
+			}
+		} else if (wasPaused) {
+			// Stopped due to user pause request
+			Consumer<Long> callback = onNativePauseCallback;
+			if (callback != null) {
+				callback.accept(threadId);
 			}
 		} else if (wasStepping) {
 			// Stopped due to stepping
@@ -598,6 +676,10 @@ public class NativeDebuggerListener {
 
 		// Clear stepping state
 		steppingThreads.clear();
+
+		// Clear pause state
+		threadsToPause.clear();
+		pausedThreads.clear();
 
 		// Clear pending exceptions
 		pendingExceptions.clear();
@@ -726,8 +808,15 @@ public class NativeDebuggerListener {
 			}
 		}
 
-		// Check stepping state
 		long threadId = Thread.currentThread().getId();
+
+		// Check for pause request (user clicked pause button)
+		if (consumePauseRequest(threadId)) {
+			pausedThreads.put(threadId, Boolean.TRUE);
+			return true;
+		}
+
+		// Check stepping state
 		StepState stepState = steppingThreads.get(threadId);
 		if (stepState == null) {
 			return false;
