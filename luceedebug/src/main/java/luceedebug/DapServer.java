@@ -326,6 +326,7 @@ public class DapServer implements IDebugProtocolServer {
         uncaughtFilter.setDescription("Break when an exception is not caught by a try/catch block");
         c.setExceptionBreakpointFilters(new ExceptionBreakpointsFilter[] { uncaughtFilter });
         c.setSupportsExceptionInfoRequest(true);
+        c.setSupportsBreakpointLocationsRequest(true);
         Log.debug("Returning capabilities with exceptionBreakpointFilters: " + java.util.Arrays.toString(c.getExceptionBreakpointFilters()));
 
         return CompletableFuture.completedFuture(c);
@@ -669,6 +670,37 @@ public class DapServer implements IDebugProtocolServer {
         bp.setId(cfBreakpoint.getID());
         bp.setVerified(cfBreakpoint.getIsBound());
         return bp;
+    }
+
+    @Override
+    public CompletableFuture<BreakpointLocationsResponse> breakpointLocations(BreakpointLocationsArguments args) {
+        var response = new BreakpointLocationsResponse();
+
+        // Only works in native mode with NativeLuceeVm
+        if (!(luceeVm_ instanceof luceedebug.coreinject.NativeLuceeVm)) {
+            response.setBreakpoints(new BreakpointLocation[0]);
+            return CompletableFuture.completedFuture(response);
+        }
+
+        var nativeVm = (luceedebug.coreinject.NativeLuceeVm) luceeVm_;
+        String serverPath = applyPathTransformsIdeToCf(args.getSource().getPath());
+        int[] executableLines = nativeVm.getExecutableLines(serverPath);
+
+        // Filter to requested line range
+        int startLine = args.getLine();
+        int endLine = args.getEndLine() != null ? args.getEndLine() : startLine;
+
+        var locations = new java.util.ArrayList<BreakpointLocation>();
+        for (int line : executableLines) {
+            if (line >= startLine && line <= endLine) {
+                var loc = new BreakpointLocation();
+                loc.setLine(line);
+                locations.add(loc);
+            }
+        }
+
+        response.setBreakpoints(locations.toArray(new BreakpointLocation[0]));
+        return CompletableFuture.completedFuture(response);
     }
 
     /**

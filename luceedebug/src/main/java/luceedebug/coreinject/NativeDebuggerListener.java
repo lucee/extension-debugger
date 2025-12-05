@@ -876,4 +876,145 @@ public class NativeDebuggerListener {
 		}
 		return false;
 	}
+
+	/**
+	 * Get executable line numbers for a file.
+	 * Triggers compilation if the file hasn't been compiled yet.
+	 *
+	 * @param absolutePath The absolute file path
+	 * @return Array of line numbers where breakpoints can be set, or empty array if file has errors
+	 */
+	public static int[] getExecutableLines(String absolutePath) {
+		// Try suspended threads first, then any active PageContext, then create temp
+		PageContext pc = getAnyPageContext();
+		if (pc == null) {
+			pc = getAnyActivePageContext();
+		}
+		if (pc == null) {
+			pc = createTemporaryPageContext();
+		}
+		if (pc == null) {
+			Log.debug("getExecutableLines: no PageContext available");
+			return new int[0];
+		}
+
+		try {
+			// Get the webroot from the PageContext's servlet context
+			Object servletContext = pc.getClass().getMethod("getServletContext").invoke(pc);
+			String webroot = (String) servletContext.getClass().getMethod("getRealPath", String.class).invoke(servletContext, "/");
+
+			// Convert absolute path to relative path by stripping webroot prefix
+			String normalizedAbsPath = absolutePath.replace('\\', '/').toLowerCase();
+			String normalizedWebroot = webroot.replace('\\', '/').toLowerCase();
+			if (!normalizedWebroot.endsWith("/")) normalizedWebroot += "/";
+
+			String relativePath;
+			if (normalizedAbsPath.startsWith(normalizedWebroot)) {
+				relativePath = "/" + absolutePath.substring(webroot.length()).replace('\\', '/');
+				// Handle case where webroot didn't have trailing slash
+				if (relativePath.startsWith("//")) relativePath = relativePath.substring(1);
+			} else {
+				// File is outside webroot - can't load it via PageSource
+				Log.debug("getExecutableLines: file outside webroot: " + absolutePath);
+				return new int[0];
+			}
+
+			// Use reflection for PageContextImpl.getPageSource() - core class not visible to OSGi bundle
+			java.lang.reflect.Method getPageSourceMethod = pc.getClass().getMethod("getPageSource", String.class);
+			Object ps = getPageSourceMethod.invoke(pc, relativePath);
+			if (ps == null) {
+				Log.debug("getExecutableLines: no PageSource for " + absolutePath);
+				return new int[0];
+			}
+
+			// Load/compile the page via PageSource.loadPage(PageContext, boolean)
+			java.lang.reflect.Method loadPageMethod = ps.getClass().getMethod("loadPage", PageContext.class, boolean.class);
+			Object page = loadPageMethod.invoke(ps, pc, false);
+			if (page == null) {
+				Log.debug("getExecutableLines: failed to load page " + absolutePath);
+				return new int[0];
+			}
+
+			// Get executable lines from compiled Page class
+			java.lang.reflect.Method getExecLinesMethod = page.getClass().getMethod("getExecutableLines");
+			int[] lines = (int[]) getExecLinesMethod.invoke(page);
+			return lines;
+		} catch (NoSuchMethodException e) {
+			// Method doesn't exist - Lucee version without this feature
+			Log.debug("getExecutableLines: method not found (old Lucee version?)");
+			return new int[0];
+		} catch (java.lang.reflect.InvocationTargetException e) {
+			// Unwrap the real exception from reflection
+			Throwable cause = e.getCause();
+			Log.debug("getExecutableLines failed for " + absolutePath + ": " +
+				(cause != null ? cause.getClass().getName() + ": " + cause.getMessage() : e.getMessage()));
+			return new int[0];
+		} catch (Exception e) {
+			Log.debug("getExecutableLines failed for " + absolutePath + ": " + e.getClass().getName() + ": " + e.getMessage());
+			return new int[0];
+		}
+	}
+
+	/**
+	 * Get any active PageContext from running requests.
+	 * Used when no thread is suspended but we need a PageContext for compilation.
+	 */
+	private static PageContext getAnyActivePageContext() {
+		try {
+			Object engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
+			java.lang.reflect.Method getEngineMethod = engine.getClass().getMethod("getEngine");
+			Object engineImpl = getEngineMethod.invoke(engine);
+
+			java.lang.reflect.Method getFactoriesMethod = engineImpl.getClass().getMethod("getCFMLFactories");
+			@SuppressWarnings("unchecked")
+			java.util.Map<String, ?> factoriesMap = (java.util.Map<String, ?>) getFactoriesMethod.invoke(engineImpl);
+
+			for (Object factory : factoriesMap.values()) {
+				try {
+					java.lang.reflect.Method getActiveMethod = factory.getClass().getMethod("getActivePageContexts");
+					@SuppressWarnings("unchecked")
+					java.util.Map<Integer, ?> activeContexts = (java.util.Map<Integer, ?>) getActiveMethod.invoke(factory);
+
+					for (Object pc : activeContexts.values()) {
+						if (pc instanceof PageContext) {
+							return (PageContext) pc;
+						}
+					}
+				} catch (Exception e) {
+					// Skip this factory
+				}
+			}
+		} catch (Exception e) {
+			Log.debug("getAnyActivePageContext failed: " + e.getMessage());
+		}
+		return null;
+	}
+
+	/**
+	 * Create a temporary PageContext for compilation when no active request exists.
+	 * Uses CFMLEngineFactory.getInstance().createPageContext() like LSPUtil does.
+	 */
+	private static PageContext createTemporaryPageContext() {
+		try {
+			Object engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
+
+			// Find and call createPageContext(File, String, String, String, Cookie[], Map, Map, Map, OutputStream, long, boolean)
+			for (java.lang.reflect.Method m : engine.getClass().getMethods()) {
+				if (m.getName().equals("createPageContext") && m.getParameterCount() == 11) {
+					Class<?>[] params = m.getParameterTypes();
+					if (params[0].getName().equals("java.io.File")) {
+						java.io.File contextRoot = new java.io.File(".");
+						java.io.OutputStream devNull = new java.io.ByteArrayOutputStream();
+						Object pc = m.invoke(engine, contextRoot, "localhost", "/", "", null, null, null, null, devNull, -1L, false);
+						if (pc instanceof PageContext) {
+							return (PageContext) pc;
+						}
+					}
+				}
+			}
+		} catch (Exception e) {
+			Log.debug("createTemporaryPageContext failed: " + e.getMessage());
+		}
+		return null;
+	}
 }

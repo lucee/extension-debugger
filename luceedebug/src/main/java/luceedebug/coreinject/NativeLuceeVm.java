@@ -267,13 +267,27 @@ public class NativeLuceeVm implements ILuceeVm {
 		// Clear existing native breakpoints for this file
 		NativeDebuggerListener.clearBreakpointsForFile(serverPath.get());
 
+		// Get executable lines to validate breakpoints
+		int[] executableLines = getExecutableLines(serverPath.get());
+		java.util.Set<Integer> validLines = new java.util.HashSet<>();
+		for (int line : executableLines) {
+			validLines.add(line);
+		}
+
 		// Add native breakpoints with optional conditions
 		IBreakpoint[] result = new Breakpoint[lines.length];
 		for (int i = 0; i < lines.length; i++) {
 			String condition = (exprs != null && i < exprs.length) ? exprs[i] : null;
-			NativeDebuggerListener.addBreakpoint(serverPath.get(), lines[i], condition);
-			// Native breakpoints are always "bound" - no class loading dependency
-			result[i] = Breakpoint.Bound(lines[i], nextDapBreakpointID());
+			int requestedLine = lines[i];
+
+			if (validLines.contains(requestedLine)) {
+				// Valid executable line - add breakpoint and mark as bound
+				NativeDebuggerListener.addBreakpoint(serverPath.get(), requestedLine, condition);
+				result[i] = Breakpoint.Bound(requestedLine, nextDapBreakpointID());
+			} else {
+				// Not an executable line - mark as unbound (unverified)
+				result[i] = Breakpoint.Unbound(requestedLine, nextDapBreakpointID());
+			}
 		}
 
 		return result;
@@ -385,5 +399,16 @@ public class NativeLuceeVm implements ILuceeVm {
 	public Throwable getExceptionForThread(long threadId) {
 		NativeDebuggerListener.SuspendLocation loc = NativeDebuggerListener.getSuspendLocation(threadId);
 		return loc != null ? loc.exception : null;
+	}
+
+	/**
+	 * Get executable line numbers for a file.
+	 * Used by DAP breakpointLocations request.
+	 *
+	 * @param serverPath The server-side absolute file path
+	 * @return Array of line numbers where breakpoints can be set
+	 */
+	public int[] getExecutableLines(String serverPath) {
+		return NativeDebuggerListener.getExecutableLines(serverPath);
 	}
 }
