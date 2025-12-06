@@ -33,6 +33,7 @@ public class DapServer implements IDebugProtocolServer {
     private final ILuceeVm luceeVm_;
     private final Config config_;
     private ArrayList<IPathTransform> pathTransforms = new ArrayList<>();
+    private boolean evaluationEnabled = true;
 
     // for dev, system.out was fine, in some containers, others totally suppress it and it doesn't even
     // end up in log files.
@@ -409,6 +410,11 @@ public class DapServer implements IDebugProtocolServer {
         pathTransforms = tryMungePathTransforms(args.get("pathTransforms"));
 
         config_.setStepIntoUdfDefaultValueInitFrames(getBoolOrFalseIfNonBool(args.get("stepIntoUdfDefaultValueInitFrames")));
+
+        evaluationEnabled = getAsBool(args.get("evaluation"), true);
+        if (!evaluationEnabled) {
+            Log.info("Expression evaluation disabled");
+        }
 
         clientProxy_.initialized();
 
@@ -1159,9 +1165,19 @@ public class DapServer implements IDebugProtocolServer {
     static private AtomicLong anonymousID = new AtomicLong();
 
     public CompletableFuture<EvaluateResponse> evaluate(EvaluateArguments args) {
-        Log.debug("evaluate() called: expression=" + args.getExpression() + ", context=" + args.getContext() + ", frameId=" + args.getFrameId());
+        final String expr = args.getExpression();
+        final String context = args.getContext(); // "hover", "watch", "repl", or null
+        final boolean isHover = "hover".equals(context);
+
+        if (!evaluationEnabled) {
+            final var exceptionalResult = new CompletableFuture<EvaluateResponse>();
+            final var error = new ResponseError(ResponseErrorCode.InvalidRequest, "evaluation disabled", null);
+            exceptionalResult.completeExceptionally(new ResponseErrorException(error));
+            return exceptionalResult;
+        }
+
         if (args.getFrameId() == null) {
-            Log.info("evaluate() - frameId is null, returning error");
+            if (!isHover) { Log.info("evaluate(\"" + expr + "\") - error: missing frameID"); }
             final var exceptionalResult = new CompletableFuture<EvaluateResponse>();
             final var error = new ResponseError(ResponseErrorCode.InvalidRequest, "missing frameID", null);
             exceptionalResult.completeExceptionally(new ResponseErrorException(error));
@@ -1169,10 +1185,10 @@ public class DapServer implements IDebugProtocolServer {
         }
         else {
             return luceeVm_
-                .evaluate(args.getFrameId(), args.getExpression())
+                .evaluate(args.getFrameId(), expr)
                 .collapse(
                     errMsg -> {
-                        Log.info("evaluate() - error: " + errMsg);
+                        if (!isHover) { Log.info("evaluate(\"" + expr + "\") - error: " + errMsg); }
                         final var exceptionalResult = new CompletableFuture<EvaluateResponse>();
                         final var error = new ResponseError(ResponseErrorCode.InternalError, errMsg, null);
                         exceptionalResult.completeExceptionally(new ResponseErrorException(error));
@@ -1185,14 +1201,14 @@ public class DapServer implements IDebugProtocolServer {
                                 final var response = new EvaluateResponse();
                                 if (value == null) {
                                     // some problem, or we tried to get a function from a cfc maybe? this needs work.
-                                    Log.info("evaluate() - success (object) but value is null, returning ???");
+                                    Log.info("evaluate(\"" + expr + "\") = ???");
                                     response.setVariablesReference(0);
                                     response.setIndexedVariables(0);
                                     response.setNamedVariables(0);
                                     response.setResult("???");
                                 }
                                 else {
-                                    Log.info("evaluate() - success (object): " + value.getValue());
+                                    Log.info("evaluate(\"" + expr + "\") = " + value.getValue());
                                     response.setVariablesReference((int)(long)value.getVariablesReference());
                                     response.setIndexedVariables(value.getIndexedVariables());
                                     response.setNamedVariables(value.getNamedVariables());
@@ -1202,7 +1218,7 @@ public class DapServer implements IDebugProtocolServer {
                                 return CompletableFuture.completedFuture(response);
                             },
                             string -> {
-                                Log.info("evaluate() - success (string): " + string);
+                                Log.info("evaluate(\"" + expr + "\") = " + string);
                                 final var response = new EvaluateResponse();
                                 response.setResult(string);
                                 return CompletableFuture.completedFuture(response);

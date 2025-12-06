@@ -375,12 +375,73 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	@Override
 	public Either<String, Either<ICfValueDebuggerBridge, String>> evaluate(int frameID, String expr) {
-		// In native mode, GlobalIDebugManagerHolder.debugManager is null
-		// TODO: Implement native evaluation using PageContext
-		if (GlobalIDebugManagerHolder.debugManager == null) {
-			return Either.Left("Expression evaluation not yet supported in native debugger mode");
+		// For native mode, use the frame's PageContext to evaluate expressions
+		IDebugFrame frame = frameCache.get((long) frameID);
+		if (frame == null) {
+			return Either.Left("Frame not found: " + frameID);
 		}
-		return GlobalIDebugManagerHolder.debugManager.evaluate((Long)(long)frameID, expr);
+
+		if (!(frame instanceof NativeDebugFrame)) {
+			// Fall back to JDWP mode if available
+			if (GlobalIDebugManagerHolder.debugManager != null) {
+				return GlobalIDebugManagerHolder.debugManager.evaluate((Long)(long)frameID, expr);
+			}
+			return Either.Left("evaluate only supported for native frames");
+		}
+
+		NativeDebugFrame nativeFrame = (NativeDebugFrame) frame;
+		PageContext pc = nativeFrame.getPageContext();
+		if (pc == null) {
+			return Either.Left("No PageContext available for frame");
+		}
+
+		try {
+			// Use reflection to access Lucee classes - in extension mode, direct class access fails
+			ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
+
+			// Get ThreadLocalPageContext class and methods via reflection
+			Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
+			java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
+			java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
+
+			// Get Evaluate class and call method via reflection
+			Class<?> evaluateClass = cl.loadClass("lucee.runtime.functions.dynamicEvaluation.Evaluate");
+			java.lang.reflect.Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
+
+			// Register PageContext with ThreadLocal so Lucee functions work
+			registerMethod.invoke(null, pc);
+
+			try {
+				// Evaluate the expression
+				Object result = callMethod.invoke(null, pc, new Object[]{expr});
+
+				// Return the result as a debug entity
+				if (result == null) {
+					return Either.Right(Either.Right("null"));
+				} else if (result instanceof String) {
+					return Either.Right(Either.Right("\"" + ((String)result).replaceAll("\"", "\\\\\"") + "\""));
+				} else if (result instanceof Number || result instanceof Boolean) {
+					return Either.Right(Either.Right(result.toString()));
+				} else {
+					// Complex object - wrap it for display
+					CfValueDebuggerBridge bridge = new CfValueDebuggerBridge(valTracker, result);
+					return Either.Right(Either.Left(bridge));
+				}
+			} finally {
+				releaseMethod.invoke(null);
+			}
+		} catch (Throwable e) {
+			// Unwrap InvocationTargetException to get the real cause
+			Throwable cause = e;
+			if (e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null) {
+				cause = e.getCause();
+			}
+			String msg = cause.getMessage();
+			if (msg == null) {
+				msg = cause.getClass().getName();
+			}
+			return Either.Left("Evaluation error: " + msg);
+		}
 	}
 
 	@Override

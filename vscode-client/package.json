@@ -189,6 +189,11 @@
               "secret": {
                 "type": "string",
                 "description": "Secret that must match LUCEE_DEBUGGER_SECRET environment variable on the server."
+              },
+              "evaluation": {
+                "type": "boolean",
+                "default": true,
+                "description": "Enable expression evaluation in debug console, watch panel, and hover tooltips."
               }
             }
           }
