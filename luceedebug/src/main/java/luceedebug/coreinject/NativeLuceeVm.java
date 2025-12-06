@@ -675,6 +675,129 @@ public class NativeLuceeVm implements ILuceeVm {
 	}
 
 	@Override
+	public org.eclipse.lsp4j.debug.CompletionItem[] getCompletions(int frameId, String partialExpr) {
+		// Get PageContext from frame or any suspended frame
+		PageContext pc = null;
+		IDebugFrame frame = frameCache.get((long) frameId);
+		if (frame instanceof NativeDebugFrame) {
+			pc = ((NativeDebugFrame) frame).getPageContext();
+		}
+		if (pc == null) {
+			for (IDebugFrame f : frameCache.values()) {
+				if (f instanceof NativeDebugFrame) {
+					pc = ((NativeDebugFrame) f).getPageContext();
+					if (pc != null) break;
+				}
+			}
+		}
+
+		if (pc == null) {
+			return new org.eclipse.lsp4j.debug.CompletionItem[0];
+		}
+
+		return doGetCompletionsWithPageContext(pc, partialExpr);
+	}
+
+	private org.eclipse.lsp4j.debug.CompletionItem[] doGetCompletionsWithPageContext(PageContext pc, String partialExpr) {
+		final java.util.List<org.eclipse.lsp4j.debug.CompletionItem> results = new java.util.ArrayList<>();
+
+		try {
+			ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
+
+			// Parse the expression: "local.foo.ba" -> base="local.foo", prefix="ba"
+			// Or just "va" -> base=null, prefix="va"
+			String base = null;
+			String prefix = partialExpr.toLowerCase();
+			int lastDot = partialExpr.lastIndexOf('.');
+
+			if (lastDot > 0) {
+				base = partialExpr.substring(0, lastDot);
+				prefix = partialExpr.substring(lastDot + 1).toLowerCase();
+			}
+
+			if (base != null) {
+				// Evaluate the base to get keys
+				try {
+					Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
+					java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
+					java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
+					Class<?> evaluateClass = cl.loadClass("lucee.runtime.functions.dynamicEvaluation.Evaluate");
+					java.lang.reflect.Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
+
+					registerMethod.invoke(null, pc);
+					try {
+						Object result = callMethod.invoke(null, pc, new Object[]{base});
+						if (result instanceof java.util.Map) {
+							@SuppressWarnings("unchecked")
+							java.util.Map<Object, Object> map = (java.util.Map<Object, Object>) result;
+							for (Object key : map.keySet()) {
+								String keyStr = String.valueOf(key);
+								if (keyStr.toLowerCase().startsWith(prefix)) {
+									var item = new org.eclipse.lsp4j.debug.CompletionItem();
+									item.setLabel(keyStr);
+									item.setType(org.eclipse.lsp4j.debug.CompletionItemType.PROPERTY);
+									results.add(item);
+								}
+							}
+						}
+					} finally {
+						releaseMethod.invoke(null);
+					}
+				} catch (Exception e) {
+					// Evaluation failed, return empty
+					Log.debug("Completion evaluation failed: " + e.getMessage());
+				}
+			} else {
+				// No base - complete from scope names and top-level scope variables
+				String[] scopes = {"variables", "local", "arguments", "form", "url", "cgi", "cookie", "session", "application", "server", "request", "this"};
+				for (String scope : scopes) {
+					if (scope.toLowerCase().startsWith(prefix)) {
+						var item = new org.eclipse.lsp4j.debug.CompletionItem();
+						item.setLabel(scope);
+						item.setType(org.eclipse.lsp4j.debug.CompletionItemType.MODULE);
+						results.add(item);
+					}
+				}
+
+				// Also try to complete from variables scope
+				try {
+					Object variablesScope = pc.variablesScope();
+					if (variablesScope instanceof java.util.Map) {
+						@SuppressWarnings("unchecked")
+						java.util.Map<Object, Object> map = (java.util.Map<Object, Object>) variablesScope;
+						for (Object key : map.keySet()) {
+							String keyStr = String.valueOf(key);
+							if (keyStr.toLowerCase().startsWith(prefix)) {
+								var item = new org.eclipse.lsp4j.debug.CompletionItem();
+								item.setLabel(keyStr);
+								item.setType(org.eclipse.lsp4j.debug.CompletionItemType.VARIABLE);
+								results.add(item);
+							}
+						}
+					}
+				} catch (Exception e) {
+					// Ignore scope access errors
+				}
+			}
+		} catch (Exception e) {
+			Log.debug("Completion failed: " + e.getMessage());
+		}
+
+		// Sort by label and limit
+		results.sort((a, b) -> a.getLabel().compareToIgnoreCase(b.getLabel()));
+
+		Log.info("Completions for '" + partialExpr + "': returning " + results.size() + " items");
+		for (var item : results) {
+			Log.debug("  - " + item.getLabel());
+		}
+
+		if (results.size() > 100) {
+			return results.subList(0, 100).toArray(new org.eclipse.lsp4j.debug.CompletionItem[0]);
+		}
+		return results.toArray(new org.eclipse.lsp4j.debug.CompletionItem[0]);
+	}
+
+	@Override
 	public Either<String, Either<ICfValueDebuggerBridge, String>> evaluate(int frameID, String expr) {
 		// For native mode, use the frame's PageContext to evaluate expressions
 		IDebugFrame frame = frameCache.get((long) frameID);

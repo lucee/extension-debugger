@@ -329,6 +329,7 @@ public class DapServer implements IDebugProtocolServer {
         c.setSupportsExceptionInfoRequest(true);
         c.setSupportsBreakpointLocationsRequest(true);
         c.setSupportsSetVariable(true);
+        c.setSupportsCompletionsRequest(true);
         Log.debug("Returning capabilities with exceptionBreakpointFilters: " + java.util.Arrays.toString(c.getExceptionBreakpointFilters()));
 
         return CompletableFuture.completedFuture(c);
@@ -1240,6 +1241,47 @@ public class DapServer implements IDebugProtocolServer {
                     }
                 );
         }
+    }
+
+    @Override
+    public CompletableFuture<CompletionsResponse> completions(CompletionsArguments args) {
+        final String text = args.getText();
+        final int column = args.getColumn();
+        final Integer frameId = args.getFrameId();
+
+        // Parse the text to find what we're completing
+        // column is 1-based by default, text up to cursor
+        int cursorPos = Math.min(column - 1, text.length());
+        String prefix = text.substring(0, cursorPos);
+
+        // Find the start of the current "word" we're completing
+        // CFML variables can contain: letters, digits, underscores, dots, brackets
+        int wordStart = cursorPos;
+        while (wordStart > 0) {
+            char c = prefix.charAt(wordStart - 1);
+            if (Character.isLetterOrDigit(c) || c == '_' || c == '.' || c == '[' || c == ']' || c == '"' || c == '\'') {
+                wordStart--;
+            } else {
+                break;
+            }
+        }
+
+        String partialExpr = prefix.substring(wordStart);
+
+        // Get completions from the VM
+        CompletionItem[] items = luceeVm_.getCompletions(frameId != null ? frameId : 0, partialExpr);
+
+        // Set start and length on each item so VSCode replaces the partial expression
+        // start is 0-based position in the text where replacement begins
+        // length is how many characters to replace (the partial expression length)
+        for (CompletionItem item : items) {
+            item.setStart(wordStart);  // 0-based position where partial expr starts
+            item.setLength(partialExpr.length());  // Replace the typed prefix
+        }
+
+        CompletionsResponse response = new CompletionsResponse();
+        response.setTargets(items);
+        return CompletableFuture.completedFuture(response);
     }
 
     /**

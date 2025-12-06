@@ -81,6 +81,14 @@ public interface ILuceeVm {
     public String getMetadata(int dapVariablesReference);
     public String getApplicationSettings();
 
+    /**
+     * Get completion suggestions for the debug console.
+     * @param frameId The stack frame ID for context (0 for global scope)
+     * @param partialExpr The partial expression to complete (e.g., "local.fo" or "variables.")
+     * @return Array of CompletionItems
+     */
+    public org.eclipse.lsp4j.debug.CompletionItem[] getCompletions(int frameId, String partialExpr);
+
     public String[] getTrackedCanonicalFileNames();
     /**
      * array of tuples

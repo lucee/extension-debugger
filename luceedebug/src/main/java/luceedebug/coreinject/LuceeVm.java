@@ -1158,6 +1158,11 @@ public class LuceeVm implements ILuceeVm {
         return "\"getApplicationSettings not supported in JDWP mode\"";
     }
 
+    public org.eclipse.lsp4j.debug.CompletionItem[] getCompletions(int frameId, String partialExpr) {
+        // Not implemented for JDWP mode
+        return new org.eclipse.lsp4j.debug.CompletionItem[0];
+    }
+
     public String[] getTrackedCanonicalFileNames() {
         final var result = new ArrayList<String>();
         for (var klassMap : klassMap_.values()) {
