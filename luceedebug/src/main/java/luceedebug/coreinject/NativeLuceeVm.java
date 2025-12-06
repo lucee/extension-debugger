@@ -257,7 +257,10 @@ public class NativeLuceeVm implements ILuceeVm {
 			return new IDebugEntity[0];
 		}
 		Object obj = maybeObj.get().obj;
-		return CfValueDebuggerBridge.getAsDebugEntity(valTracker, obj, which);
+		// Get the parent's path and frameId for setVariable support
+		String parentPath = valTracker.getPath(variablesReference);
+		Long frameId = valTracker.getFrameId(variablesReference);
+		return CfValueDebuggerBridge.getAsDebugEntity(valTracker, obj, which, parentPath, frameId);
 	}
 
 	// ========== Breakpoint operations ==========
@@ -378,6 +381,91 @@ public class NativeLuceeVm implements ILuceeVm {
 			return Either.Left("Expression evaluation not yet supported in native debugger mode");
 		}
 		return GlobalIDebugManagerHolder.debugManager.evaluate((Long)(long)frameID, expr);
+	}
+
+	@Override
+	public Either<String, Either<ICfValueDebuggerBridge, String>> setVariable(long variablesReference, String name, String value, long frameIdHint) {
+		// Get the frame to access PageContext
+		// First try using the frameId from ValTracker (associated with the variablesReference)
+		Long trackedFrameId = valTracker.getFrameId(variablesReference);
+		long actualFrameId = (trackedFrameId != null) ? trackedFrameId : frameIdHint;
+
+		IDebugFrame frame = frameCache.get(actualFrameId);
+		if (frame == null) {
+			return Either.Left("Frame not found: " + actualFrameId);
+		}
+
+		if (!(frame instanceof NativeDebugFrame)) {
+			return Either.Left("setVariable only supported for native frames");
+		}
+
+		NativeDebugFrame nativeFrame = (NativeDebugFrame) frame;
+		PageContext pc = nativeFrame.getPageContext();
+		if (pc == null) {
+			return Either.Left("No PageContext available for frame");
+		}
+
+		// Get the parent path from ValTracker
+		String parentPath = valTracker.getPath(variablesReference);
+		if (parentPath == null) {
+			return Either.Left("Cannot determine variable path for variablesReference: " + variablesReference);
+		}
+
+		// Build the full variable path
+		String fullPath = parentPath + "." + name;
+		Log.debug("setVariable: " + fullPath + " = " + value);
+
+		try {
+			// Use reflection to access Lucee classes - in extension mode, direct class access fails
+			ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
+
+			// Get ThreadLocalPageContext class and methods via reflection
+			Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
+			java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
+			java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
+
+			// Get Evaluate class and call method via reflection
+			Class<?> evaluateClass = cl.loadClass("lucee.runtime.functions.dynamicEvaluation.Evaluate");
+			java.lang.reflect.Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
+
+			// Register PageContext with ThreadLocal so Lucee functions work
+			registerMethod.invoke(null, pc);
+
+			try {
+				// First, evaluate the value expression to get the actual object
+				Object evaluatedValue = callMethod.invoke(null, pc, new Object[]{value});
+
+				// Use Lucee's setVariable to set the value
+				Object result = pc.setVariable(fullPath, evaluatedValue);
+
+				// Return the result as a debug entity
+				if (result == null) {
+					return Either.Right(Either.Right("null"));
+				} else if (result instanceof String) {
+					return Either.Right(Either.Right("\"" + ((String)result).replaceAll("\"", "\\\\\"") + "\""));
+				} else if (result instanceof Number || result instanceof Boolean) {
+					return Either.Right(Either.Right(result.toString()));
+				} else {
+					// Complex object - wrap it for display
+					CfValueDebuggerBridge bridge = new CfValueDebuggerBridge(valTracker, result);
+					return Either.Right(Either.Left(bridge));
+				}
+			} finally {
+				releaseMethod.invoke(null);
+			}
+		} catch (Throwable e) {
+			// Unwrap InvocationTargetException to get the real cause
+			Throwable cause = e;
+			if (e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null) {
+				cause = e.getCause();
+			}
+			String msg = cause.getMessage();
+			if (msg == null) {
+				msg = cause.getClass().getName();
+			}
+			Log.debug("setVariable failed: " + msg);
+			return Either.Left("Error setting variable: " + msg);
+		}
 	}
 
 	@Override

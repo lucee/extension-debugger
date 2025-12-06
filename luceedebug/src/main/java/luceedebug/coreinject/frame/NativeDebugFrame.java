@@ -188,11 +188,24 @@ public class NativeDebugFrame implements IDebugFrame {
 		}
 	}
 
+	/**
+	 * Get the PageContext for this frame.
+	 * Used by setVariable to execute Lucee code in the correct context.
+	 */
+	public PageContext getPageContext() {
+		return pageContext;
+	}
+
 	private void checkedPutScopeRef( String name, Object scope ) {
 		if ( scope != null && scope instanceof Map ) {
 			var v = new MarkerTrait.Scope( (Map<?, ?>) scope );
 			CfValueDebuggerBridge.pin( v );
-			scopes_.put( name, new CfValueDebuggerBridge( valTracker, v ) );
+			var bridge = new CfValueDebuggerBridge( valTracker, v );
+			// Track the path for setVariable support - scope name is the root path
+			valTracker.setPath( bridge.id, name );
+			// Track the frame ID for setVariable support - needed to get PageContext
+			valTracker.setFrameId( bridge.id, id );
+			scopes_.put( name, bridge );
 		}
 	}
 
@@ -288,7 +301,12 @@ public class NativeDebugFrame implements IDebugFrame {
 		var v = new MarkerTrait.Scope( cfcatch );
 		CfValueDebuggerBridge.pin( cfcatch );
 		CfValueDebuggerBridge.pin( v );
-		scopes_.put( "cfcatch", new CfValueDebuggerBridge( valTracker, v ) );
+		var bridge = new CfValueDebuggerBridge( valTracker, v );
+		// Track the path for setVariable support
+		valTracker.setPath( bridge.id, "cfcatch" );
+		// Track the frame ID for setVariable support
+		valTracker.setFrameId( bridge.id, id );
+		scopes_.put( "cfcatch", bridge );
 	}
 
 	/**

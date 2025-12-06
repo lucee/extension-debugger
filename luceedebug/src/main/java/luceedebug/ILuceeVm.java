@@ -94,6 +94,16 @@ public interface ILuceeVm {
     public Either<String, Either<ICfValueDebuggerBridge, String>> evaluate(int frameID, String expr);
 
     /**
+     * Set a variable value.
+     * @param variablesReference The parent container's variablesReference
+     * @param name The variable name within the container
+     * @param value The new value as a string expression
+     * @param frameId The frame ID for context (used to get PageContext)
+     * @return Either an error message (Left), or the new value as ICfValueDebuggerBridge or String (Right)
+     */
+    public Either<String, Either<ICfValueDebuggerBridge, String>> setVariable(long variablesReference, String name, String value, long frameId);
+
+    /**
      * Register callback for exception events (native mode only).
      * Called with Java thread ID when a thread stops due to an uncaught exception.
      */

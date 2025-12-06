@@ -97,6 +97,20 @@ public class NativeDebuggerListener {
 	private static final ConcurrentHashMap<Long, Throwable> pendingExceptions = new ConcurrentHashMap<>();
 
 	/**
+	 * Cache for executable lines - keyed by file path, stores compileTime and lines.
+	 * Avoids re-decoding bitmap on every breakpoint set if file hasn't changed.
+	 */
+	private static class CachedExecutableLines {
+		final long compileTime;
+		final int[] lines;
+		CachedExecutableLines( long compileTime, int[] lines ) {
+			this.compileTime = compileTime;
+			this.lines = lines;
+		}
+	}
+	private static final ConcurrentHashMap<String, CachedExecutableLines> executableLinesCache = new ConcurrentHashMap<>();
+
+	/**
 	 * Callback to notify LuceeVm when a thread suspends via native breakpoint.
 	 * Called with Java thread ID and optional label. Used for "breakpoint" stop reason in DAP.
 	 * Label is non-null for programmatic breakpoint("label") calls, null otherwise.
@@ -880,77 +894,110 @@ public class NativeDebuggerListener {
 	/**
 	 * Get executable line numbers for a file.
 	 * Triggers compilation if the file hasn't been compiled yet.
+	 * Uses caching based on compileTime to avoid repeated bitmap decoding.
 	 *
 	 * @param absolutePath The absolute file path
 	 * @return Array of line numbers where breakpoints can be set, or empty array if file has errors
 	 */
-	public static int[] getExecutableLines(String absolutePath) {
+	public static int[] getExecutableLines( String absolutePath ) {
 		// Try suspended threads first, then any active PageContext, then create temp
 		PageContext pc = getAnyPageContext();
-		if (pc == null) {
+		if ( pc == null ) {
 			pc = getAnyActivePageContext();
 		}
-		if (pc == null) {
+		if ( pc == null ) {
 			pc = createTemporaryPageContext();
 		}
-		if (pc == null) {
-			Log.debug("getExecutableLines: no PageContext available");
+		if ( pc == null ) {
+			Log.debug( "getExecutableLines: no PageContext available" );
 			return new int[0];
 		}
 
 		try {
 			// Get the webroot from the PageContext's servlet context
-			Object servletContext = pc.getClass().getMethod("getServletContext").invoke(pc);
-			String webroot = (String) servletContext.getClass().getMethod("getRealPath", String.class).invoke(servletContext, "/");
+			Object servletContext = pc.getClass().getMethod( "getServletContext" ).invoke( pc );
+			String webroot = (String) servletContext.getClass().getMethod( "getRealPath", String.class ).invoke( servletContext, "/" );
 
 			// Convert absolute path to relative path by stripping webroot prefix
-			String normalizedAbsPath = absolutePath.replace('\\', '/').toLowerCase();
-			String normalizedWebroot = webroot.replace('\\', '/').toLowerCase();
-			if (!normalizedWebroot.endsWith("/")) normalizedWebroot += "/";
+			String normalizedAbsPath = absolutePath.replace( '\\', '/' ).toLowerCase();
+			String normalizedWebroot = webroot.replace( '\\', '/' ).toLowerCase();
+			if ( !normalizedWebroot.endsWith( "/" ) ) normalizedWebroot += "/";
 
 			String relativePath;
-			if (normalizedAbsPath.startsWith(normalizedWebroot)) {
-				relativePath = "/" + absolutePath.substring(webroot.length()).replace('\\', '/');
+			if ( normalizedAbsPath.startsWith( normalizedWebroot ) ) {
+				relativePath = "/" + absolutePath.substring( webroot.length() ).replace( '\\', '/' );
 				// Handle case where webroot didn't have trailing slash
-				if (relativePath.startsWith("//")) relativePath = relativePath.substring(1);
-			} else {
+				if ( relativePath.startsWith( "//" ) ) relativePath = relativePath.substring( 1 );
+			}
+			else {
 				// File is outside webroot - can't load it via PageSource
-				Log.debug("getExecutableLines: file outside webroot: " + absolutePath);
+				Log.debug( "getExecutableLines: file outside webroot: " + absolutePath );
 				return new int[0];
 			}
 
 			// Use reflection for PageContextImpl.getPageSource() - core class not visible to OSGi bundle
-			java.lang.reflect.Method getPageSourceMethod = pc.getClass().getMethod("getPageSource", String.class);
-			Object ps = getPageSourceMethod.invoke(pc, relativePath);
-			if (ps == null) {
-				Log.debug("getExecutableLines: no PageSource for " + absolutePath);
+			java.lang.reflect.Method getPageSourceMethod = pc.getClass().getMethod( "getPageSource", String.class );
+			Object ps = getPageSourceMethod.invoke( pc, relativePath );
+			if ( ps == null ) {
+				Log.debug( "getExecutableLines: no PageSource for " + absolutePath );
 				return new int[0];
 			}
 
 			// Load/compile the page via PageSource.loadPage(PageContext, boolean)
-			java.lang.reflect.Method loadPageMethod = ps.getClass().getMethod("loadPage", PageContext.class, boolean.class);
-			Object page = loadPageMethod.invoke(ps, pc, false);
-			if (page == null) {
-				Log.debug("getExecutableLines: failed to load page " + absolutePath);
+			java.lang.reflect.Method loadPageMethod = ps.getClass().getMethod( "loadPage", PageContext.class, boolean.class );
+			Object page = loadPageMethod.invoke( ps, pc, false );
+			if ( page == null ) {
+				Log.debug( "getExecutableLines: failed to load page " + absolutePath );
 				return new int[0];
 			}
 
-			// Get executable lines from compiled Page class
-			java.lang.reflect.Method getExecLinesMethod = page.getClass().getMethod("getExecutableLines");
-			int[] lines = (int[]) getExecLinesMethod.invoke(page);
-			return lines;
-		} catch (NoSuchMethodException e) {
-			// Method doesn't exist - Lucee version without this feature
-			Log.debug("getExecutableLines: method not found (old Lucee version?)");
+			// Get executable lines from compiled Page class - returns Object[] {compileTime, lines}
+			java.lang.reflect.Method getExecLinesMethod = page.getClass().getMethod( "getExecutableLines" );
+			Object result = getExecLinesMethod.invoke( page );
+
+			// Handle old Lucee versions that return int[] directly
+			if ( result instanceof int[] ) {
+				return (int[]) result;
+			}
+
+			// New format: Object[] {compileTime (Long), lines (int[] or null)}
+			if ( result instanceof Object[] ) {
+				Object[] arr = (Object[]) result;
+				long compileTime = ( (Long) arr[0] ).longValue();
+				int[] lines = (int[]) arr[1];
+
+				// Check cache
+				CachedExecutableLines cached = executableLinesCache.get( absolutePath );
+				if ( cached != null && cached.compileTime == compileTime ) {
+					Log.debug( "getExecutableLines: cache hit for " + absolutePath );
+					return cached.lines;
+				}
+
+				// Cache miss or stale - update cache
+				int[] resultLines = lines != null ? lines : new int[0];
+				executableLinesCache.put( absolutePath, new CachedExecutableLines( compileTime, resultLines ) );
+				Log.debug( "getExecutableLines: cached " + resultLines.length + " lines for " + absolutePath );
+				return resultLines;
+			}
+
+			// Unexpected return type
+			Log.debug( "getExecutableLines: unexpected return type: " + ( result != null ? result.getClass().getName() : "null" ) );
 			return new int[0];
-		} catch (java.lang.reflect.InvocationTargetException e) {
+		}
+		catch ( NoSuchMethodException e ) {
+			// Method doesn't exist - Lucee version without this feature
+			Log.debug( "getExecutableLines: method not found (old Lucee version?)" );
+			return new int[0];
+		}
+		catch ( java.lang.reflect.InvocationTargetException e ) {
 			// Unwrap the real exception from reflection
 			Throwable cause = e.getCause();
-			Log.debug("getExecutableLines failed for " + absolutePath + ": " +
-				(cause != null ? cause.getClass().getName() + ": " + cause.getMessage() : e.getMessage()));
+			Log.debug( "getExecutableLines failed for " + absolutePath + ": " +
+				( cause != null ? cause.getClass().getName() + ": " + cause.getMessage() : e.getMessage() ) );
 			return new int[0];
-		} catch (Exception e) {
-			Log.debug("getExecutableLines failed for " + absolutePath + ": " + e.getClass().getName() + ": " + e.getMessage());
+		}
+		catch ( Exception e ) {
+			Log.debug( "getExecutableLines failed for " + absolutePath + ": " + e.getClass().getName() + ": " + e.getMessage() );
 			return new int[0];
 		}
 	}

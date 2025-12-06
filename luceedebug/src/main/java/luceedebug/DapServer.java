@@ -327,6 +327,7 @@ public class DapServer implements IDebugProtocolServer {
         c.setExceptionBreakpointFilters(new ExceptionBreakpointsFilter[] { uncaughtFilter });
         c.setSupportsExceptionInfoRequest(true);
         c.setSupportsBreakpointLocationsRequest(true);
+        c.setSupportsSetVariable(true);
         Log.debug("Returning capabilities with exceptionBreakpointFilters: " + java.util.Arrays.toString(c.getExceptionBreakpointFilters()));
 
         return CompletableFuture.completedFuture(c);
@@ -629,6 +630,59 @@ public class DapServer implements IDebugProtocolServer {
         var result = new VariablesResponse();
         result.setVariables(variables.toArray(size -> new Variable[size]));
         return CompletableFuture.completedFuture(result);
+	}
+
+	@Override
+	public CompletableFuture<SetVariableResponse> setVariable(SetVariableArguments args) {
+		Log.debug("setVariable() called: variablesReference=" + args.getVariablesReference() + ", name=" + args.getName() + ", value=" + args.getValue());
+
+		// Don't allow setting variables if secret wasn't validated
+		if (!secretValidated) {
+			var exceptionalResult = new CompletableFuture<SetVariableResponse>();
+			var error = new ResponseError(ResponseErrorCode.InvalidRequest, "Not authorized - secret not validated", null);
+			exceptionalResult.completeExceptionally(new ResponseErrorException(error));
+			return exceptionalResult;
+		}
+
+		return luceeVm_
+			.setVariable(args.getVariablesReference(), args.getName(), args.getValue(), 0)
+			.collapse(
+				errMsg -> {
+					Log.info("setVariable() - error: " + errMsg);
+					var exceptionalResult = new CompletableFuture<SetVariableResponse>();
+					var error = new ResponseError(ResponseErrorCode.InternalError, errMsg, null);
+					exceptionalResult.completeExceptionally(new ResponseErrorException(error));
+					return exceptionalResult;
+				},
+				someResult -> {
+					return someResult.collapse(
+						bridgeObj -> {
+							// Complex object returned
+							IDebugEntity value = bridgeObj.maybeNull_asValue(args.getName());
+							var response = new SetVariableResponse();
+							if (value == null) {
+								response.setValue("<?>");
+								response.setVariablesReference(0);
+							} else {
+								response.setValue(value.getValue());
+								response.setVariablesReference((int) value.getVariablesReference());
+								response.setNamedVariables(bridgeObj.getNamedVariablesCount());
+								response.setIndexedVariables(bridgeObj.getIndexedVariablesCount());
+							}
+							Log.debug("setVariable() - success (object): value=" + response.getValue() + ", ref=" + response.getVariablesReference());
+							return CompletableFuture.completedFuture(response);
+						},
+						stringValue -> {
+							// Simple value returned
+							var response = new SetVariableResponse();
+							response.setValue(stringValue);
+							response.setVariablesReference(0);
+							Log.debug("setVariable() - success (simple): value=" + stringValue);
+							return CompletableFuture.completedFuture(response);
+						}
+					);
+				}
+			);
 	}
 
     @Override

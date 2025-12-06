@@ -1180,6 +1180,12 @@ public class LuceeVm implements ILuceeVm {
         return GlobalIDebugManagerHolder.debugManager.evaluate((Long)(long)frameID, expr);
     }
 
+    public Either<String, Either<ICfValueDebuggerBridge, String>> setVariable(long variablesReference, String name, String value, long frameId) {
+        // setVariable not yet implemented for JDWP mode
+        // Would need to use DebugManager to evaluate and set the value
+        return Either.Left("setVariable not yet supported in JDWP mode - use native debugger mode instead");
+    }
+
     // Not used in JDWP mode - exception handling uses JDWP events
     public void registerExceptionEventCallback(Consumer<Long> cb) {
         // no-op for JDWP mode

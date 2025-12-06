@@ -68,34 +68,57 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
      * @maybeNull_which --> null means "any type"
      */
     public static IDebugEntity[] getAsDebugEntity(Frame frame, Object obj, IDebugEntity.DebugEntityType maybeNull_which) {
-        return getAsDebugEntity(frame.valTracker, obj, maybeNull_which);
+        return getAsDebugEntity(frame.valTracker, obj, maybeNull_which, null);
     }
 
     public static IDebugEntity[] getAsDebugEntity(ValTracker valTracker, Object obj, IDebugEntity.DebugEntityType maybeNull_which) {
+        return getAsDebugEntity(valTracker, obj, maybeNull_which, null);
+    }
+
+    /**
+     * Get debug entities for an object's children.
+     * @param valTracker The value tracker
+     * @param obj The parent object to expand
+     * @param maybeNull_which Filter for named/indexed variables, or null for all
+     * @param parentPath The variable path of the parent (e.g., "local.foo"), or null if not tracked
+     */
+    public static IDebugEntity[] getAsDebugEntity(ValTracker valTracker, Object obj, IDebugEntity.DebugEntityType maybeNull_which, String parentPath) {
+        return getAsDebugEntity(valTracker, obj, maybeNull_which, parentPath, null);
+    }
+
+    /**
+     * Get debug entities for an object's children.
+     * @param valTracker The value tracker
+     * @param obj The parent object to expand
+     * @param maybeNull_which Filter for named/indexed variables, or null for all
+     * @param parentPath The variable path of the parent (e.g., "local.foo"), or null if not tracked
+     * @param frameId The frame ID for setVariable support, or null if not tracked
+     */
+    public static IDebugEntity[] getAsDebugEntity(ValTracker valTracker, Object obj, IDebugEntity.DebugEntityType maybeNull_which, String parentPath, Long frameId) {
         final boolean namedOK = maybeNull_which == null || maybeNull_which == IDebugEntity.DebugEntityType.NAMED;
         final boolean indexedOK = maybeNull_which == null || maybeNull_which == IDebugEntity.DebugEntityType.INDEXED;
 
         if (obj instanceof MarkerTrait.Scope && namedOK) {
             @SuppressWarnings("unchecked")
             var m = (Map<String, Object>)(((MarkerTrait.Scope)obj).scopelike);
-            return getAsMaplike(valTracker, m);
+            return getAsMaplike(valTracker, m, parentPath, frameId);
         }
         else if (obj instanceof Map && namedOK) {
             if (obj instanceof Component) {
                 return new IDebugEntity[] {
-                    maybeNull_asValue(valTracker, "this", obj, true, true),
-                    maybeNull_asValue(valTracker, "variables", ((Component)obj).getComponentScope()),
-                    maybeNull_asValue(valTracker, "static", ((Component)obj).staticScope())
+                    maybeNull_asValue(valTracker, "this", obj, true, true, parentPath, frameId),
+                    maybeNull_asValue(valTracker, "variables", ((Component)obj).getComponentScope(), parentPath, frameId),
+                    maybeNull_asValue(valTracker, "static", ((Component)obj).staticScope(), parentPath, frameId)
                 };
             }
             else {
                 @SuppressWarnings("unchecked")
                 var m = (Map<String, Object>)obj;
-                return getAsMaplike(valTracker, m);
+                return getAsMaplike(valTracker, m, parentPath, frameId);
             }
         }
         else if (obj instanceof Array && indexedOK) {
-            return getAsCfArray(valTracker, (Array)obj);
+            return getAsCfArray(valTracker, (Array)obj, parentPath, frameId);
         }
         else {
             return new IDebugEntity[0];
@@ -138,16 +161,16 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         return false;
     }
 
-    private static IDebugEntity[] getAsMaplike(ValTracker valTracker, Map<String, Object> map) {
+    private static IDebugEntity[] getAsMaplike(ValTracker valTracker, Map<String, Object> map, String parentPath, Long frameId) {
         ArrayList<IDebugEntity> results = new ArrayList<>();
-        
+
         Set<Map.Entry<String,Object>> entries = map.entrySet();
 
         // We had been showing member functions on component instances, but it's really just noise. Maybe this could be a configurable option.
         final var skipNoisyComponentFunctions = true;
-        
+
         for (Map.Entry<String, Object> entry : entries) {
-            IDebugEntity val = maybeNull_asValue(valTracker, entry.getKey(), entry.getValue(), skipNoisyComponentFunctions, false);
+            IDebugEntity val = maybeNull_asValue(valTracker, entry.getKey(), entry.getValue(), skipNoisyComponentFunctions, false, parentPath, frameId);
             if (val != null) {
                 results.add(val);
             }
@@ -160,17 +183,17 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         //     results.add(val);
         // }
 
-        results.sort(xscopeByName);    
+        results.sort(xscopeByName);
 
         return results.toArray(new IDebugEntity[results.size()]);
     }
 
-    private static IDebugEntity[] getAsCfArray(ValTracker valTracker, Array array) {
+    private static IDebugEntity[] getAsCfArray(ValTracker valTracker, Array array, String parentPath, Long frameId) {
         ArrayList<IDebugEntity> result = new ArrayList<>();
 
         // cf 1-indexed
         for (int i = 1; i <= array.size(); ++i) {
-            IDebugEntity val = maybeNull_asValue(valTracker, Integer.toString(i), array.get(i, null));
+            IDebugEntity val = maybeNull_asValue(valTracker, Integer.toString(i), array.get(i, null), parentPath, frameId);
             if (val != null) {
                 result.add(val);
             }
@@ -180,7 +203,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
     }
 
     public IDebugEntity maybeNull_asValue(String name) {
-        return maybeNull_asValue(frame.valTracker, name, obj, true, false);
+        return maybeNull_asValue(frame.valTracker, name, obj, true, false, null, null);
     }
 
     /**
@@ -189,21 +212,27 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
      * which is used to cut down on noise from CFC getters/setters/member-functions which aren't too useful for debugging.
      * Maybe such things should be optionally included as per some configuration.
      */
-    private static IDebugEntity maybeNull_asValue(ValTracker valTracker, String name, Object obj) {
-        return maybeNull_asValue(valTracker, name, obj, true, false);
+    private static IDebugEntity maybeNull_asValue(ValTracker valTracker, String name, Object obj, String parentPath, Long frameId) {
+        return maybeNull_asValue(valTracker, name, obj, true, false, parentPath, frameId);
     }
 
     /**
      * @markDiscoveredComponentsAsIterableThisRef if true, a Component will be marked as if it were any normal Map<String, Object>. This drives discovery of variables;
      * showing the "top level" of a component we want to show its "inner scopes" (this, variables, and static)
+     * @param parentPath The variable path of the parent container (e.g., "local"), or null if not tracked
+     * @param frameId The frame ID for setVariable support, or null if not tracked
      */
     private static IDebugEntity maybeNull_asValue(
         ValTracker valTracker,
         String name,
         Object obj,
         boolean skipNoisyComponentFunctions,
-        boolean treatDiscoveredComponentsAsScopes
+        boolean treatDiscoveredComponentsAsScopes,
+        String parentPath,
+        Long frameId
     ) {
+        // Build the full path for this variable
+        String childPath = (parentPath != null) ? parentPath + "." + name : null;
         DebugEntity val = new DebugEntity();
         val.name = name;
 
@@ -225,7 +254,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         else if (obj instanceof Array) {
             int len = ((Array)obj).size();
             val.value = "Array (" + len + ")";
-            val.variablesReference = valTracker.idempotentRegisterObject(obj).id;
+            val.variablesReference = valTracker.registerObjectWithPathAndFrameId(obj, childPath, frameId).id;
         }
         else if (
             /*
@@ -256,13 +285,13 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
 
                 pin(queryAsArrayOfStructs);
 
-                val.variablesReference = valTracker.idempotentRegisterObject(queryAsArrayOfStructs).id;
+                val.variablesReference = valTracker.registerObjectWithPathAndFrameId(queryAsArrayOfStructs, childPath, frameId).id;
             }
             catch (Throwable e) {
                 // Fall back to generic display
                 try {
                     val.value = obj.getClass().toString();
-                    val.variablesReference = valTracker.idempotentRegisterObject(obj).id;
+                    val.variablesReference = valTracker.registerObjectWithPathAndFrameId(obj, childPath, frameId).id;
                 }
                 catch (Throwable x) {
                     val.value = "<?> (no string representation available)";
@@ -276,22 +305,22 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
                 if (treatDiscoveredComponentsAsScopes) {
                     var v = new MarkerTrait.Scope((Component)obj);
                     ((ComponentScopeMarkerTraitShim)obj).__luceedebug__pinComponentScopeMarkerTrait(v);
-                    val.variablesReference = valTracker.idempotentRegisterObject(v).id;
+                    val.variablesReference = valTracker.registerObjectWithPathAndFrameId(v, childPath, frameId).id;
                 }
                 else {
-                    val.variablesReference = valTracker.idempotentRegisterObject(obj).id;
+                    val.variablesReference = valTracker.registerObjectWithPathAndFrameId(obj, childPath, frameId).id;
                 }
             }
             else {
                 int len = ((Map<?,?>)obj).size();
                 val.value = "{} (" + len + " members)";
-                val.variablesReference = valTracker.idempotentRegisterObject(obj).id;
+                val.variablesReference = valTracker.registerObjectWithPathAndFrameId(obj, childPath, frameId).id;
             }
         }
         else {
             try {
                 val.value = obj.getClass().toString();
-                val.variablesReference = valTracker.idempotentRegisterObject(obj).id;
+                val.variablesReference = valTracker.registerObjectWithPathAndFrameId(obj, childPath, frameId).id;
             }
             catch (Throwable x) {
                 val.value = "<?> (no string representation available)";
