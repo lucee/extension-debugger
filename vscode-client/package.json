@@ -55,6 +55,14 @@
         {
           "when": "debugType == 'cfml'",
           "command": "luceedebug.openFileForVariableSourcePath"
+        },
+        {
+          "when": "debugType == 'cfml'",
+          "command": "luceedebug.getMetadata"
+        },
+        {
+          "when": "debugType == 'cfml'",
+          "command": "luceedebug.getApplicationSettings"
         }
       ]
     },
@@ -97,6 +105,11 @@
       {
         "command": "luceedebug.openFileForVariableSourcePath",
         "title": "luceedebug: open defining file",
+        "enablement": "debugType == 'cfml'"
+      },
+      {
+        "command": "luceedebug.getMetadata",
+        "title": "luceedebug: get metadata",
         "enablement": "debugType == 'cfml'"
       }
     ],

@@ -968,6 +968,20 @@ public class DapServer implements IDebugProtocolServer {
         return CompletableFuture.completedFuture(response);
 	}
 
+    @JsonRequest
+	CompletableFuture<DumpResponse> getMetadata(DumpArguments args) {
+        final var response = new DumpResponse();
+        response.setContent(luceeVm_.getMetadata(args.variablesReference));
+        return CompletableFuture.completedFuture(response);
+	}
+
+    @JsonRequest
+	CompletableFuture<DumpResponse> getApplicationSettings(DumpArguments args) {
+        final var response = new DumpResponse();
+        response.setContent(luceeVm_.getApplicationSettings());
+        return CompletableFuture.completedFuture(response);
+	}
+
     class DebugBreakpointBindingsResponse {
         /** as we see them on the server, after fs canonicalization */
         private String[] canonicalFilenames;

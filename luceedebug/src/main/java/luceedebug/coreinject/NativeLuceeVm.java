@@ -346,14 +346,245 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	@Override
 	public String dump(int dapVariablesReference) {
-		// Need a suspended thread to get PageContext for dump
-		// For native mode, we'd need to track suspended threads differently
-		return GlobalIDebugManagerHolder.debugManager.doDump(new ArrayList<>(), dapVariablesReference);
+		return doDumpNative(dapVariablesReference, false);
 	}
 
 	@Override
 	public String dumpAsJSON(int dapVariablesReference) {
-		return GlobalIDebugManagerHolder.debugManager.doDumpAsJSON(new ArrayList<>(), dapVariablesReference);
+		return doDumpNative(dapVariablesReference, true);
+	}
+
+	@Override
+	public String getMetadata(int dapVariablesReference) {
+		// Get the object from valTracker
+		var maybeObj = valTracker.maybeGetFromId(dapVariablesReference);
+		if (maybeObj.isEmpty()) {
+			return "\"Variable not found\"";
+		}
+		Object obj = maybeObj.get().obj;
+
+		// Unwrap MarkerTrait.Scope if needed
+		if (obj instanceof CfValueDebuggerBridge.MarkerTrait.Scope) {
+			obj = ((CfValueDebuggerBridge.MarkerTrait.Scope) obj).scopelike;
+		}
+
+		// Get PageContext from a cached frame
+		PageContext pc = null;
+		Long frameId = valTracker.getFrameId(dapVariablesReference);
+		if (frameId != null) {
+			IDebugFrame frame = frameCache.get(frameId);
+			if (frame instanceof NativeDebugFrame) {
+				pc = ((NativeDebugFrame) frame).getPageContext();
+			}
+		}
+
+		// Fallback: try any suspended frame's PageContext
+		if (pc == null) {
+			for (IDebugFrame frame : frameCache.values()) {
+				if (frame instanceof NativeDebugFrame) {
+					pc = ((NativeDebugFrame) frame).getPageContext();
+					if (pc != null) break;
+				}
+			}
+		}
+
+		if (pc == null) {
+			return "\"No PageContext available\"";
+		}
+
+		return doGetMetadataWithPageContext(pc, obj);
+	}
+
+	/**
+	 * Execute getMetadata on a separate thread (required for PageContext registration).
+	 */
+	private String doGetMetadataWithPageContext(PageContext sourcePC, Object target) {
+		final var result = new Object() {
+			String value = "\"getMetadata failed\"";
+		};
+
+		final PageContext pc = sourcePC;
+		final Object obj = target;
+
+		Thread thread = new Thread(() -> {
+			try {
+				ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
+
+				// Register the existing PageContext with ThreadLocal
+				Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
+				java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
+				java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
+				registerMethod.invoke(null, pc);
+
+				try {
+					// Call GetMetaData.call(PageContext, Object)
+					Class<?> getMetaDataClass = cl.loadClass("lucee.runtime.functions.system.GetMetaData");
+					java.lang.reflect.Method callMethod = getMetaDataClass.getMethod("call",
+						PageContext.class, Object.class);
+					Object metadata = callMethod.invoke(null, pc, obj);
+
+					// Serialize the metadata to JSON
+					Class<?> serializeClass = cl.loadClass("lucee.runtime.functions.conversion.SerializeJSON");
+					java.lang.reflect.Method serializeMethod = serializeClass.getMethod("call",
+						PageContext.class, Object.class, Object.class);
+					result.value = (String) serializeMethod.invoke(null, pc, metadata, "struct");
+				} finally {
+					releaseMethod.invoke(null);
+				}
+			} catch (Throwable e) {
+				Log.debug("getMetadata failed: " + e.getMessage());
+				result.value = "\"Error: " + e.getMessage().replace("\"", "\\\"") + "\"";
+			}
+		});
+
+		thread.start();
+		try {
+			thread.join();
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
+
+		return result.value;
+	}
+
+	/**
+	 * Native mode dump implementation using reflection to call Lucee functions.
+	 * @param dapVariablesReference The variablesReference from DAP
+	 * @param asJson If true, returns JSON; if false, returns HTML dump
+	 */
+	private String doDumpNative(int dapVariablesReference, boolean asJson) {
+		// Get the object from valTracker
+		var maybeObj = valTracker.maybeGetFromId(dapVariablesReference);
+		if (maybeObj.isEmpty()) {
+			return asJson ? "\"Variable not found\"" : "<div>Variable not found</div>";
+		}
+		Object obj = maybeObj.get().obj;
+
+		// Unwrap MarkerTrait.Scope if needed
+		if (obj instanceof CfValueDebuggerBridge.MarkerTrait.Scope) {
+			obj = ((CfValueDebuggerBridge.MarkerTrait.Scope) obj).scopelike;
+		}
+
+		// Get the frameId for this variablesReference to get its PageContext
+		Long frameId = valTracker.getFrameId(dapVariablesReference);
+		PageContext pc = null;
+		if (frameId != null) {
+			IDebugFrame frame = frameCache.get(frameId);
+			if (frame instanceof NativeDebugFrame) {
+				pc = ((NativeDebugFrame) frame).getPageContext();
+			}
+		}
+
+		// If no PageContext from frame, try to find any suspended frame's PageContext
+		if (pc == null) {
+			for (IDebugFrame frame : frameCache.values()) {
+				if (frame instanceof NativeDebugFrame) {
+					pc = ((NativeDebugFrame) frame).getPageContext();
+					if (pc != null) break;
+				}
+			}
+		}
+
+		if (pc == null) {
+			return asJson ? "\"No PageContext available\"" : "<div>No PageContext available</div>";
+		}
+
+		return doDumpWithPageContext(pc, obj, asJson);
+	}
+
+	/**
+	 * Execute dump on a separate thread (required for PageContext registration).
+	 */
+	private String doDumpWithPageContext(PageContext sourcePC, Object someDumpable, boolean asJson) {
+		final var result = new Object() {
+			String value = asJson ? "\"dump failed\"" : "<div>dump failed</div>";
+		};
+
+		final PageContext pc = sourcePC;
+		final Object dumpable = someDumpable;
+
+		Thread thread = new Thread(() -> {
+			try {
+				ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
+
+				// Register the existing PageContext with ThreadLocal
+				Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
+				java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
+				java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
+				registerMethod.invoke(null, pc);
+
+				try {
+					if (asJson) {
+						// Call SerializeJSON
+						Class<?> serializeClass = cl.loadClass("lucee.runtime.functions.conversion.SerializeJSON");
+						java.lang.reflect.Method callMethod = serializeClass.getMethod("call",
+							PageContext.class, Object.class, Object.class);
+						result.value = (String) callMethod.invoke(null, pc, dumpable, "struct");
+					} else {
+						// Use DumpUtil to get DumpData, then HTMLDumpWriter to render
+						result.value = wrapDumpInHtmlDoc(dumpObjectAsHtml(pc, cl, dumpable));
+					}
+				} finally {
+					releaseMethod.invoke(null);
+				}
+			} catch (Throwable e) {
+				Log.debug("dump failed: " + e.getMessage());
+				result.value = asJson
+					? "\"Error: " + e.getMessage().replace("\"", "\\\"") + "\""
+					: "<div>Error: " + e.getMessage() + "</div>";
+			}
+		});
+
+		thread.start();
+		try {
+			thread.join();
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
+
+		return result.value;
+	}
+
+	/**
+	 * Dump an object to HTML string using Lucee's HTMLDumpWriter.
+	 */
+	private String dumpObjectAsHtml(PageContext pc, ClassLoader cl, Object obj) throws Exception {
+		// Use DumpUtil to get DumpData, then HTMLDumpWriter to render
+		Class<?> dumpUtilClass = cl.loadClass("lucee.runtime.dump.DumpUtil");
+		Class<?> dumpPropertiesClass = cl.loadClass("lucee.runtime.dump.DumpProperties");
+		Class<?> dumpDataClass = cl.loadClass("lucee.runtime.dump.DumpData");
+
+		// Get default dump properties - use DEFAULT_RICH field
+		java.lang.reflect.Field defaultField = dumpPropertiesClass.getField("DEFAULT_RICH");
+		Object dumpProps = defaultField.get(null);
+
+		// toDumpData(PageContext, Object, int maxlevel, DumpProperties)
+		java.lang.reflect.Method toDumpDataMethod = dumpUtilClass.getMethod("toDumpData",
+			PageContext.class, Object.class, int.class, dumpPropertiesClass);
+		Object dumpData = toDumpDataMethod.invoke(null, pc, obj, 9999, dumpProps);
+
+		// Create HTMLDumpWriter and render
+		Class<?> htmlDumpWriterClass = cl.loadClass("lucee.runtime.dump.HTMLDumpWriter");
+		Object htmlWriter = htmlDumpWriterClass.getConstructor().newInstance();
+
+		// DumpWriter.toString(PageContext, DumpData)
+		java.lang.reflect.Method toStringMethod = htmlDumpWriterClass.getMethod("toString",
+			PageContext.class, dumpDataClass);
+		return (String) toStringMethod.invoke(htmlWriter, pc, dumpData);
+	}
+
+	private static String wrapDumpInHtmlDoc(String dumpHtml) {
+		return "<!DOCTYPE html>\n" +
+			"<html>\n" +
+			"<head>\n" +
+			"<style>\n" +
+			"body { font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif; }\n" +
+			"</style>\n" +
+			"</head>\n" +
+			"<body>\n" +
+			dumpHtml +
+			"</body>\n" +
+			"</html>\n";
 	}
 
 	@Override
@@ -364,13 +595,83 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	@Override
 	public String[][] getBreakpointDetail() {
-		// TODO: Return native breakpoint details
-		return new String[0][];
+		return NativeDebuggerListener.getBreakpointDetails();
+	}
+
+	@Override
+	public String getApplicationSettings() {
+		// Get PageContext from any suspended frame
+		PageContext pc = null;
+		for (IDebugFrame frame : frameCache.values()) {
+			if (frame instanceof NativeDebugFrame) {
+				pc = ((NativeDebugFrame) frame).getPageContext();
+				if (pc != null) break;
+			}
+		}
+
+		if (pc == null) {
+			return "\"No PageContext available\"";
+		}
+
+		return doGetApplicationSettingsWithPageContext(pc);
+	}
+
+	/**
+	 * Execute getApplicationSettings on a separate thread (required for PageContext registration).
+	 */
+	private String doGetApplicationSettingsWithPageContext(PageContext sourcePC) {
+		final var result = new Object() {
+			String value = "\"getApplicationSettings failed\"";
+		};
+
+		final PageContext pc = sourcePC;
+
+		Thread thread = new Thread(() -> {
+			try {
+				ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
+
+				// Register the existing PageContext with ThreadLocal
+				Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
+				java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
+				java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
+				registerMethod.invoke(null, pc);
+
+				try {
+					// Call GetApplicationSettings.call(PageContext)
+					Class<?> getAppSettingsClass = cl.loadClass("lucee.runtime.functions.system.GetApplicationSettings");
+					java.lang.reflect.Method callMethod = getAppSettingsClass.getMethod("call", PageContext.class);
+					Object settings = callMethod.invoke(null, pc);
+
+					// Serialize the settings to JSON
+					Class<?> serializeClass = cl.loadClass("lucee.runtime.functions.conversion.SerializeJSON");
+					java.lang.reflect.Method serializeMethod = serializeClass.getMethod("call",
+						PageContext.class, Object.class, Object.class);
+					result.value = (String) serializeMethod.invoke(null, pc, settings, "struct");
+				} finally {
+					releaseMethod.invoke(null);
+				}
+			} catch (Throwable e) {
+				Log.debug("getApplicationSettings failed: " + e.getMessage());
+				result.value = "\"Error: " + e.getMessage().replace("\"", "\\\"") + "\"";
+			}
+		});
+
+		thread.start();
+		try {
+			thread.join(5000); // 5 second timeout
+		} catch (InterruptedException e) {
+			return "\"Timeout getting application settings\"";
+		}
+
+		return result.value;
 	}
 
 	@Override
 	public String getSourcePathForVariablesRef(int variablesRef) {
-		return GlobalIDebugManagerHolder.debugManager.getSourcePathForVariablesRef(variablesRef);
+		return valTracker
+			.maybeGetFromId(variablesRef)
+			.map(taggedObj -> CfValueDebuggerBridge.getSourcePath(taggedObj.obj))
+			.orElse(null);
 	}
 
 	@Override

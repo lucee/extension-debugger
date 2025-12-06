@@ -78,6 +78,8 @@ public interface ILuceeVm {
 
     public String dump(int dapVariablesReference);
     public String dumpAsJSON(int dapVariablesReference);
+    public String getMetadata(int dapVariablesReference);
+    public String getApplicationSettings();
 
     public String[] getTrackedCanonicalFileNames();
     /**

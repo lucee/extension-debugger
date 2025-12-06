@@ -410,6 +410,22 @@ public class NativeDebuggerListener {
 	}
 
 	/**
+	 * Get breakpoint details as array of [file, line] pairs.
+	 * Used by debugBreakpointBindings command.
+	 * @return Array of [serverPath, "line:N"] pairs
+	 */
+	public static String[][] getBreakpointDetails() {
+		int[] lines = bpLines;
+		String[] files = bpFiles;
+		String[][] result = new String[lines.length][2];
+		for (int i = 0; i < lines.length; i++) {
+			result[i][0] = files[i];
+			result[i][1] = "line:" + lines[i];
+		}
+		return result;
+	}
+
+	/**
 	 * Check if a thread is natively suspended.
 	 */
 	public static boolean isNativelySuspended(long javaThreadId) {

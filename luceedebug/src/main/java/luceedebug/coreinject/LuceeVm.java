@@ -1148,6 +1148,16 @@ public class LuceeVm implements ILuceeVm {
         return GlobalIDebugManagerHolder.debugManager.doDumpAsJSON(getSuspendedThreadListForDumpWorker(), dapVariablesReference);
     }
 
+    public String getMetadata(int dapVariablesReference) {
+        // Not implemented for JDWP mode - would need IDebugManager extension
+        return "\"getMetadata not supported in JDWP mode\"";
+    }
+
+    public String getApplicationSettings() {
+        // Not implemented for JDWP mode - would need IDebugManager extension
+        return "\"getApplicationSettings not supported in JDWP mode\"";
+    }
+
     public String[] getTrackedCanonicalFileNames() {
         final var result = new ArrayList<String>();
         for (var klassMap : klassMap_.values()) {
