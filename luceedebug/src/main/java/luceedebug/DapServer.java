@@ -330,6 +330,7 @@ public class DapServer implements IDebugProtocolServer {
         c.setSupportsBreakpointLocationsRequest(true);
         c.setSupportsSetVariable(true);
         c.setSupportsCompletionsRequest(true);
+        c.setSupportsFunctionBreakpoints(true);
         Log.debug("Returning capabilities with exceptionBreakpointFilters: " + java.util.Arrays.toString(c.getExceptionBreakpointFilters()));
 
         return CompletableFuture.completedFuture(c);
@@ -792,6 +793,52 @@ public class DapServer implements IDebugProtocolServer {
 		}
 		NativeDebuggerListener.setBreakOnUncaughtExceptions(breakOnUncaught);
 		return CompletableFuture.completedFuture(new SetExceptionBreakpointsResponse());
+	}
+
+	/**
+	 * Handle function breakpoints - break when a function with a given name is called.
+	 * Supports:
+	 * - Simple names: "onRequestStart" matches any function with that name
+	 * - Qualified names: "User.save" matches save() in User.cfc only
+	 * - Wildcards: "on*" matches onRequestStart, onError, etc.
+	 * - Conditions: "onRequestStart" with condition "cgi.script_name contains '/api/'"
+	 */
+	@Override
+	public CompletableFuture<SetFunctionBreakpointsResponse> setFunctionBreakpoints(
+			SetFunctionBreakpointsArguments args) {
+		FunctionBreakpoint[] bps = args.getBreakpoints();
+		Log.debug("setFunctionBreakpoints: " + (bps != null ? bps.length : 0) + " breakpoints");
+
+		if (bps == null || bps.length == 0) {
+			NativeDebuggerListener.clearFunctionBreakpoints();
+			return CompletableFuture.completedFuture(new SetFunctionBreakpointsResponse());
+		}
+
+		String[] names = new String[bps.length];
+		String[] conditions = new String[bps.length];
+
+		for (int i = 0; i < bps.length; i++) {
+			names[i] = bps[i].getName();
+			conditions[i] = bps[i].getCondition();
+			Log.debug("  Function breakpoint: " + names[i] +
+				(conditions[i] != null ? " condition=" + conditions[i] : ""));
+		}
+
+		NativeDebuggerListener.setFunctionBreakpoints(names, conditions);
+
+		// Build response - mark all as verified (we can't validate until runtime)
+		Breakpoint[] result = new Breakpoint[bps.length];
+		for (int i = 0; i < bps.length; i++) {
+			Breakpoint bp = new Breakpoint();
+			bp.setId(i + 1);
+			bp.setVerified(true);
+			bp.setMessage("Function breakpoint: " + names[i]);
+			result[i] = bp;
+		}
+
+		SetFunctionBreakpointsResponse response = new SetFunctionBreakpointsResponse();
+		response.setBreakpoints(result);
+		return CompletableFuture.completedFuture(response);
 	}
 
 	/**

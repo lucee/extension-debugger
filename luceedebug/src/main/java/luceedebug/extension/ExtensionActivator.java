@@ -220,21 +220,32 @@ public class ExtensionActivator {
 				pageContextClass, Throwable.class, boolean.class);
 			final Method onOutputMethod = nativeListenerClass.getMethod("onOutput",
 				String.class, boolean.class);
+			final Method onFunctionEntryMethod = nativeListenerClass.getMethod("onFunctionEntry",
+				pageContextClass, String.class, String.class, String.class, int.class);
 
 			// Create proxy in Lucee's classloader, delegating to extension's implementation
 			Object listenerProxy = java.lang.reflect.Proxy.newProxyInstance(
 				luceeLoader,
 				new Class<?>[] { listenerInterface },
 				(proxy, method, args) -> {
-					switch (method.getName()) {
-						case "getName": return getNameMethod.invoke(null);
-						case "isClientConnected": return isDapClientConnectedMethod.invoke(null);
-						case "onSuspend": return onSuspendMethod.invoke(null, args);
-						case "onResume": return onResumeMethod.invoke(null, args);
-						case "shouldSuspend": return shouldSuspendMethod.invoke(null, args);
-						case "onException": return onExceptionMethod.invoke(null, args);
-						case "onOutput": return onOutputMethod.invoke(null, args);
-						default: return null;
+					try {
+						switch (method.getName()) {
+							case "getName": return getNameMethod.invoke(null);
+							case "isClientConnected": return isDapClientConnectedMethod.invoke(null);
+							case "onSuspend": return onSuspendMethod.invoke(null, args);
+							case "onResume": return onResumeMethod.invoke(null, args);
+							case "shouldSuspend": return shouldSuspendMethod.invoke(null, args);
+							case "onException": return onExceptionMethod.invoke(null, args);
+							case "onOutput": return onOutputMethod.invoke(null, args);
+							case "onFunctionEntry": return onFunctionEntryMethod.invoke(null, args);
+							default: return null;
+						}
+					} catch (java.lang.reflect.InvocationTargetException e) {
+						Throwable cause = e.getCause();
+						Log.error("Proxy invocation failed for " + method.getName(), cause);
+						// Return safe defaults for boolean methods
+						if (method.getReturnType() == boolean.class) return false;
+						return null;
 					}
 				}
 			);

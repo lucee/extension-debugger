@@ -59,6 +59,23 @@ public class NativeDebuggerListener {
 	private static int bpMaxPathLen = 0;
 
 	/**
+	 * Function breakpoint storage - parallel arrays for fast lookup.
+	 * Writers synchronize on funcBpLock, readers just access the arrays.
+	 */
+	private static final Object funcBpLock = new Object();
+	private static String[] funcBpNames = new String[0];        // lowercase function names
+	private static String[] funcBpComponents = new String[0];   // lowercase component names (null = any)
+	private static String[] funcBpConditions = new String[0];   // CFML conditions (null = unconditional)
+	private static boolean[] funcBpIsWildcard = new boolean[0]; // true if name ends with *
+
+	/**
+	 * Pre-computed bounds for fast rejection in onFunctionEntry().
+	 */
+	private static int funcBpMinLen = Integer.MAX_VALUE;
+	private static int funcBpMaxLen = Integer.MIN_VALUE;
+	private static volatile boolean hasFuncBps = false;
+
+	/**
 	 * Map of Java thread ID -> WeakReference<PageContext> for natively suspended threads.
 	 * Used to call debuggerResume() when DAP continue is received.
 	 * Note: We use PageContext (loader interface) not PageContextImpl to avoid class loading cycles.
@@ -190,7 +207,7 @@ public class NativeDebuggerListener {
 	 */
 	private static void updateHasSuspendConditions() {
 		hasSuspendConditions = dapClientConnected &&
-			(bpLines.length > 0 || breakOnUncaughtExceptions || !steppingThreads.isEmpty() || !threadsToPause.isEmpty());
+			(bpLines.length > 0 || hasFuncBps || breakOnUncaughtExceptions || !steppingThreads.isEmpty() || !threadsToPause.isEmpty());
 	}
 
 	/**
@@ -875,19 +892,23 @@ public class NativeDebuggerListener {
 	/**
 	 * Evaluate a CFML condition expression and return its boolean result.
 	 * Returns false if evaluation fails (exception, timeout, etc.).
+	 * Uses reflection to call Lucee's Evaluate function to avoid classloader issues.
 	 */
 	private static boolean evaluateCondition(PageContext pc, String condition) {
 		try {
-			// Use Evaluate.call() directly on PageContext - same approach as DebugManager
-			Object result = lucee.runtime.functions.dynamicEvaluation.Evaluate.call(
-				pc,
-				new String[]{ condition }
-			);
-			return lucee.runtime.op.Caster.toBoolean(result);
+			// Use reflection to call Evaluate.call() through Lucee's classloader
+			ClassLoader luceeLoader = pc.getClass().getClassLoader();
+			Class<?> evaluateClass = luceeLoader.loadClass("lucee.runtime.functions.dynamicEvaluation.Evaluate");
+			java.lang.reflect.Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
+			Object result = callMethod.invoke(null, pc, new Object[]{ condition });
+
+			// Cast result to boolean using Lucee's Caster
+			Class<?> casterClass = luceeLoader.loadClass("lucee.runtime.op.Caster");
+			java.lang.reflect.Method toBooleanMethod = casterClass.getMethod("toBoolean", Object.class);
+			return (Boolean) toBooleanMethod.invoke(null, result);
 		} catch (Exception e) {
 			// Condition evaluation failed - don't suspend
-			// Log but don't spam - conditions may intentionally reference undefined vars
-			Log.debug("Condition evaluation failed: " + e.getMessage());
+			Log.error("Condition evaluation failed: " + e.getMessage());
 			return false;
 		}
 	}
@@ -1079,5 +1100,155 @@ public class NativeDebuggerListener {
 			Log.debug("createTemporaryPageContext failed: " + e.getMessage());
 		}
 		return null;
+	}
+
+	// ========== Function Breakpoints ==========
+
+	/**
+	 * Check if we should suspend on function entry.
+	 * Called from Lucee's pushDebuggerFrame via DebuggerListener.onFunctionEntry().
+	 * Must be blazing fast - every UDF call hits this.
+	 */
+	public static boolean onFunctionEntry( PageContext pc, String functionName,
+											String componentName, String file, int startLine ) {
+		// Fast path - no function breakpoints
+		if ( !hasFuncBps || !dapClientConnected ) {
+			return false;
+		}
+
+		int len = functionName.length();
+
+		// Length bounds check - rejects 99% of calls instantly
+		if ( len < funcBpMinLen || len > funcBpMaxLen ) {
+			return false;
+		}
+
+		// Normalize for case-insensitive matching
+		String lowerFunc = functionName.toLowerCase();
+		String lowerComp = componentName != null ? componentName.toLowerCase() : null;
+
+		// Check each breakpoint
+		String[] names = funcBpNames;
+		String[] comps = funcBpComponents;
+		String[] conds = funcBpConditions;
+		boolean[] wilds = funcBpIsWildcard;
+
+		for ( int i = 0; i < names.length; i++ ) {
+			// Check component qualifier first (if specified)
+			if ( comps[i] != null && ( lowerComp == null || !lowerComp.equals( comps[i] ) ) ) {
+				continue;
+			}
+
+			// Check function name match
+			boolean match;
+			if ( wilds[i] ) {
+				// Wildcard: "on*" matches "onRequestStart"
+				String prefix = names[i].substring( 0, names[i].length() - 1 );
+				match = lowerFunc.startsWith( prefix );
+			}
+			else {
+				match = lowerFunc.equals( names[i] );
+			}
+
+			if ( match ) {
+				// Check condition if present
+				if ( conds[i] != null ) {
+					if ( !evaluateCondition( pc, conds[i] ) ) {
+						continue;
+					}
+				}
+				Log.info( "Function breakpoint hit: " + functionName +
+					( componentName != null ? " in " + componentName : "" ) );
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Set function breakpoints (replaces all existing).
+	 * Called from DapServer.setFunctionBreakpoints().
+	 */
+	public static void setFunctionBreakpoints( String[] names, String[] conditions ) {
+		synchronized ( funcBpLock ) {
+			int count = names.length;
+			String[] newNames = new String[count];
+			String[] newComps = new String[count];
+			String[] newConds = new String[count];
+			boolean[] newWilds = new boolean[count];
+
+			int minLen = Integer.MAX_VALUE;
+			int maxLen = Integer.MIN_VALUE;
+
+			for ( int i = 0; i < count; i++ ) {
+				String name = names[i].trim();
+				String condition = ( conditions != null && i < conditions.length && conditions[i] != null && !conditions[i].isEmpty() )
+									? conditions[i] : null;
+
+				// Parse qualified name: "Component.method" or just "method"
+				int dot = name.lastIndexOf( '.' );
+				String compName = null;
+				String funcName = name;
+				if ( dot > 0 ) {
+					compName = name.substring( 0, dot ).toLowerCase();
+					funcName = name.substring( dot + 1 );
+				}
+
+				// Check for wildcard
+				boolean isWild = funcName.endsWith( "*" );
+
+				// Store lowercase for case-insensitive matching
+				newNames[i] = funcName.toLowerCase();
+				newComps[i] = compName;
+				newConds[i] = condition;
+				newWilds[i] = isWild;
+
+				// Update bounds (for wildcards, use prefix length)
+				int effectiveLen = isWild ? funcName.length() - 1 : funcName.length();
+				if ( !isWild ) {
+					// Exact match: bounds are exact length
+					if ( effectiveLen < minLen ) minLen = effectiveLen;
+					if ( effectiveLen > maxLen ) maxLen = effectiveLen;
+				}
+				else {
+					// Wildcard: any length >= prefix is possible
+					if ( effectiveLen < minLen ) minLen = effectiveLen;
+					maxLen = Integer.MAX_VALUE; // can't bound max for wildcards
+				}
+
+				Log.info( "Function breakpoint: " + name +
+					( compName != null ? " (component: " + compName + ")" : "" ) +
+					( isWild ? " (wildcard)" : "" ) +
+					( condition != null ? " condition: " + condition : "" ) );
+			}
+
+			funcBpNames = newNames;
+			funcBpComponents = newComps;
+			funcBpConditions = newConds;
+			funcBpIsWildcard = newWilds;
+			funcBpMinLen = count > 0 ? minLen : Integer.MAX_VALUE;
+			funcBpMaxLen = count > 0 ? maxLen : Integer.MIN_VALUE;
+		}
+		hasFuncBps = funcBpNames.length > 0;
+		updateHasSuspendConditions();
+		Log.info( "Function breakpoints set: " + funcBpNames.length );
+	}
+
+	/**
+	 * Clear all function breakpoints.
+	 */
+	public static void clearFunctionBreakpoints() {
+		synchronized ( funcBpLock ) {
+			funcBpNames = new String[0];
+			funcBpComponents = new String[0];
+			funcBpConditions = new String[0];
+			funcBpIsWildcard = new boolean[0];
+			funcBpMinLen = Integer.MAX_VALUE;
+			funcBpMaxLen = Integer.MIN_VALUE;
+		}
+		hasFuncBps = false;
+		updateHasSuspendConditions();
+		Log.debug( "Function breakpoints cleared" );
 	}
 }
