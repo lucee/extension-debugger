@@ -4,6 +4,8 @@ import org.eclipse.lsp4j.debug.OutputEventArguments;
 import org.eclipse.lsp4j.debug.OutputEventArgumentsCategory;
 import org.eclipse.lsp4j.debug.services.IDebugProtocolClient;
 
+import lucee.loader.engine.CFMLEngineFactory;
+
 /**
  * Centralized logging for luceedebug.
  * Routes all log messages through a common method that:
@@ -11,9 +13,11 @@ import org.eclipse.lsp4j.debug.services.IDebugProtocolClient;
  * - Optionally sends to DAP OutputEvent when a client is connected
  * - Supports ANSI colors (configurable via launch.json colorLogs, default true)
  * - Respects log level (configurable via launch.json logLevel, default info)
+ * - Writes errors to Lucee's exception.log when available
  */
 public class Log {
 	private static final String PREFIX = "[luceedebug] ";
+	private static final String APP_NAME = "luceedebug";
 
 	// ANSI escape codes (for console/tomcat output)
 	private static final String ANSI_RESET = "\u001b[0m";
@@ -117,6 +121,7 @@ public class Log {
 
 	/**
 	 * Log an error message. Always logged regardless of log level.
+	 * Also logs to Lucee's exception.log when available.
 	 */
 	public static void error(String message) {
 		if (!consoleOutput) {
@@ -129,14 +134,17 @@ public class Log {
 			System.out.println(consoleMsg);
 		}
 		sendToDap("ERROR: " + message, OutputEventArgumentsCategory.STDERR);
+		logToLuceeException(message);
 	}
 
 	/**
 	 * Log an error with exception.
+	 * Also logs to Lucee's exception.log when available.
 	 */
 	public static void error(String message, Throwable t) {
 		error(message + ": " + t.getMessage());
 		t.printStackTrace();
+		logToLuceeException(message, t);
 	}
 
 	/**
@@ -265,6 +273,42 @@ public class Log {
 				// Don't recursively log - just print to console
 				System.out.println(PREFIX + "Failed to send to DAP: " + e.getMessage());
 			}
+		}
+	}
+
+	/**
+	 * Get Lucee's exception log if available.
+	 * Returns null if Lucee is not running or log cannot be obtained.
+	 */
+	private static lucee.commons.io.log.Log getLuceeExceptionLog() {
+		try {
+			var config = CFMLEngineFactory.getInstance().getThreadConfig();
+			if (config != null) {
+				return config.getLog("exception");
+			}
+		} catch (Throwable t) {
+			// Lucee not available or not initialized yet - silently ignore
+		}
+		return null;
+	}
+
+	/**
+	 * Log an error to Lucee's exception.log if available.
+	 */
+	private static void logToLuceeException(String message) {
+		var luceeLog = getLuceeExceptionLog();
+		if (luceeLog != null) {
+			luceeLog.error(APP_NAME, message);
+		}
+	}
+
+	/**
+	 * Log an error with throwable to Lucee's exception.log if available.
+	 */
+	private static void logToLuceeException(String message, Throwable t) {
+		var luceeLog = getLuceeExceptionLog();
+		if (luceeLog != null) {
+			luceeLog.error(APP_NAME, message, t);
 		}
 	}
 }

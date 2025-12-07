@@ -22,6 +22,9 @@ public class ExtensionActivator {
 	private static ClassLoader extensionLoader;
 	private static boolean listenerRegistered = false;
 	private static boolean alreadyActivated = false;
+	// Keep a static reference to prevent GC from collecting the instance
+	// (Lucee's startup-hook discards its reference immediately)
+	private static ExtensionActivator instance;
 
 	/**
 	 * Constructor called by Lucee's startup-hook mechanism.
@@ -34,40 +37,69 @@ public class ExtensionActivator {
 			return;
 		}
 		alreadyActivated = true;
+		// Keep a reference to prevent GC
+		instance = this;
 
-		// Get debug port - if not set, debugger is disabled
-		int debugPort = EnvUtil.getDebuggerPort();
-		if (debugPort < 0) {
-			Log.info("Debugger disabled - set LUCEE_DEBUGGER_SECRET to enable");
-			return;
+		try {
+			// Get debug port - if not set, debugger is disabled
+			int debugPort = EnvUtil.getDebuggerPort();
+			if (debugPort < 0) {
+				Log.info("Debugger disabled - set LUCEE_DEBUGGER_SECRET to enable");
+				return;
+			}
+			Log.info("Extension activating");
+
+			// Store classloaders for later listener registration
+			extensionLoader = this.getClass().getClassLoader();
+			luceeLoader = luceeConfig.getClass().getClassLoader();
+
+			// Determine filesystem case sensitivity from Lucee's config location
+			String configPath = luceeConfig.getConfigDir().getAbsolutePath();
+			boolean fsCaseSensitive = luceedebug.Config.checkIfFileSystemIsCaseSensitive(configPath);
+
+			// Create luceedebug config
+			luceedebug.Config config = new luceedebug.Config(fsCaseSensitive);
+
+			// Set Lucee classloader for reflection access to core classes
+			NativeLuceeVm.setLuceeClassLoader(luceeLoader);
+
+			// Create NativeLuceeVm
+			luceeVm = new NativeLuceeVm(config);
+
+			// Start DAP server in background thread (createForSocket blocks forever)
+			// Listener registration is deferred until DAP client connects with secret
+			final int port = debugPort;
+			final luceedebug.Config finalConfig = config;
+		Thread dapThread = new Thread(() -> {
+			// Use System.out directly to ensure we see output even if Log class has issues
+			System.out.println("[luceedebug] DAP server thread started");
+			System.out.flush();
+			try {
+				System.out.println("[luceedebug] Calling DapServer.createForSocket on port " + port);
+				System.out.flush();
+				DapServer.createForSocket(luceeVm, finalConfig, "localhost", port);
+				// This line should never be reached - createForSocket loops forever
+				System.out.println("[luceedebug] DAP server createForSocket returned unexpectedly");
+			} catch (Throwable t) {
+				System.out.println("[luceedebug] DAP server thread failed: " + t.getClass().getName() + ": " + t.getMessage());
+				t.printStackTrace(System.out);
+				Log.error("DAP server thread failed", t);
+			}
+			System.out.println("[luceedebug] DAP server thread exiting");
+		}, "luceedebug-dap-server");
+		dapThread.setDaemon(true);
+		dapThread.setUncaughtExceptionHandler((t, e) -> {
+			System.out.println("[luceedebug] DAP thread died with uncaught exception: " + e.getClass().getName() + ": " + e.getMessage());
+			e.printStackTrace(System.out);
+		});
+		dapThread.start();
+
+		Log.info("Native mode, DAP server starting on localhost:" + debugPort);
+		} catch (Throwable t) {
+			System.out.println("[luceedebug] Extension activation failed: " + t.getClass().getName() + ": " + t.getMessage());
+			t.printStackTrace(System.out);
+			Log.error("Extension activation failed", t);
 		}
-		Log.info("Extension activating");
-
-		// Store classloaders for later listener registration
-		extensionLoader = this.getClass().getClassLoader();
-		luceeLoader = luceeConfig.getClass().getClassLoader();
-
-		// Determine filesystem case sensitivity from Lucee's config location
-		String configPath = luceeConfig.getConfigDir().getAbsolutePath();
-		boolean fsCaseSensitive = luceedebug.Config.checkIfFileSystemIsCaseSensitive(configPath);
-
-		// Create luceedebug config
-		luceedebug.Config config = new luceedebug.Config(fsCaseSensitive);
-
-		// Set Lucee classloader for reflection access to core classes
-		NativeLuceeVm.setLuceeClassLoader(luceeLoader);
-
-		// Create NativeLuceeVm
-		luceeVm = new NativeLuceeVm(config);
-
-		// Start DAP server in background thread (createForSocket blocks forever)
-		// Listener registration is deferred until DAP client connects with secret
-		final int port = debugPort;
-		new Thread(() -> {
-			DapServer.createForSocket(luceeVm, config, "localhost", port);
-		}, "luceedebug-dap-server").start();
-
-		Log.info("DAP server starting on localhost:" + debugPort + " (waiting for client with secret)");
 	}
 
 	/**
@@ -109,6 +141,14 @@ public class ExtensionActivator {
 	 */
 	public static boolean isListenerRegistered() {
 		return listenerRegistered;
+	}
+
+	/**
+	 * Check if the extension was actually activated by Lucee (native mode).
+	 * In agent mode, the class exists but wasn't activated via startup-hook.
+	 */
+	public static boolean isNativeModeActive() {
+		return alreadyActivated;
 	}
 
 	/**
@@ -273,12 +313,8 @@ public class ExtensionActivator {
 		}
 	}
 
-	/**
-	 * Called by Lucee when the extension is uninstalled or updated.
-	 * Shuts down the DAP server to free the port.
-	 */
-	public void finalize() {
-		Log.debug("Extension finalizing - shutting down DAP server");
-		DapServer.shutdown();
-	}
+	// Note: finalize() was removed - it was being called by GC prematurely
+	// and shutting down the DAP server. Now we keep a static reference to
+	// prevent GC, and rely on DapServer.shutdown() being called explicitly
+	// (via system properties) when the extension is reinstalled.
 }

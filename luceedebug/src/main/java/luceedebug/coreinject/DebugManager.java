@@ -33,7 +33,6 @@ import luceedebug.IDebugManager;
 import luceedebug.coreinject.frame.DebugFrame;
 import luceedebug.coreinject.frame.Frame;
 import luceedebug.coreinject.frame.Frame.FrameContext;
-import luceedebug.coreinject.frame.NativeDebugFrame;
 
 public class DebugManager implements IDebugManager {
 
@@ -74,7 +73,12 @@ public class DebugManager implements IDebugManager {
 
         new Thread(() -> {
             System.out.println("[luceedebug] jdwp self connect OK");
-            DapServer.createForSocket(luceeVm, config, debugHost, debugPort);
+            try {
+                DapServer.createForSocket(luceeVm, config, debugHost, debugPort);
+            } catch (Throwable t) {
+                System.out.println("[luceedebug] DAP server thread failed: " + t.getMessage());
+                t.printStackTrace();
+            }
         }, threadName).start();
     }
 
@@ -498,32 +502,18 @@ public class DebugManager implements IDebugManager {
     }
 
     synchronized public IDebugFrame[] getCfStack(Thread thread) {
+        System.out.println("[luceedebug] getCfStack: looking for thread=" + thread.getName() + " (id=" + thread.getId() + ") identity=" + System.identityHashCode(thread));
+        System.out.println("[luceedebug] getCfStack: cfStackByThread has " + cfStackByThread.size() + " entries:");
+        for (var entry : cfStackByThread.entrySet()) {
+            Thread t = entry.getKey();
+            System.out.println("[luceedebug]   thread=" + t.getName() + " (id=" + t.getId() + ") identity=" + System.identityHashCode(t) + " frames=" + entry.getValue().size());
+        }
         ArrayList<DebugFrame> stack = cfStackByThread.get(thread);
 
-        // If no instrumented frames, try native Lucee7 frames
+        // Agent mode: only use bytecode-instrumented frames, no native fallback
         if (stack == null || stack.isEmpty()) {
-            // Try our tracked PageContext first
-            WeakReference<PageContext> pcRef = pageContextByThread.get(thread);
-            PageContext pc = pcRef != null ? pcRef.get() : null;
-
-            // Fall back to ThreadLocalPageContext if we're on the same thread
-            if (pc == null && thread == Thread.currentThread()) {
-                pc = lucee.runtime.engine.ThreadLocalPageContext.get();
-            }
-
-            if (pc != null) {
-                // In agent mode, pass null for classloader - classes are injected into Lucee's classloader
-                IDebugFrame[] nativeFrames = NativeDebugFrame.getNativeFrames(pc, valTracker, -1, null);
-                if (nativeFrames != null && nativeFrames.length > 0) {
-                    return nativeFrames;
-                }
-            }
-
-            if (stack == null) {
-                System.out.println("getCfStack called, frames was null, frames is " + cfStackByThread + ", passed thread was " + thread);
-                System.out.println("                   thread=" + thread + " this=" + this);
-                return new Frame[0];
-            }
+            System.out.println("[luceedebug] getCfStack: no instrumented frames for thread " + thread);
+            return new Frame[0];
         }
 
         ArrayList<DebugFrame> result = new ArrayList<>();
@@ -532,9 +522,11 @@ public class DebugManager implements IDebugManager {
         // go backwards, "most recent first"
         for (int i = stack.size() - 1; i >= 0; --i) {
             DebugFrame frame = stack.get(i);
+            System.out.println("[luceedebug] getCfStack: frame[" + i + "] line=" + frame.getLine() + " source=" + frame.getSourceFilePath());
             if (frame.getLine() == 0) {
-                // ???? should we just not push such frames on the stack?
-                // what does this mean?
+                // Frame line not yet set - step notification hasn't run yet
+                // This can happen when breakpoint fires before first line executes
+                System.out.println("[luceedebug] getCfStack: skipping frame with line=0");
                 continue;
             }
             else {
@@ -607,14 +599,18 @@ public class DebugManager implements IDebugManager {
     }
 
     public void luceedebug_stepNotificationEntry_step(int lineNumber) {
-        // Fast path: single volatile read when not stepping (99.9% of the time)
+        Thread currentThread = Thread.currentThread();
+
+        // ALWAYS update the frame's line number, even when not stepping
+        // This is required for breakpoints to work - they need to know the current line
+        DebugFrame frame = maybeUpdateTopmostFrame(currentThread, lineNumber);
+
+        // Fast path: if not stepping, we're done after updating line number
         if (!hasAnyStepRequests) {
             return;
         }
 
         final int minDistanceToLuceedebugStepNotificationEntryFrame = 0;
-        Thread currentThread = Thread.currentThread();
-        DebugFrame frame = maybeUpdateTopmostFrame(currentThread, lineNumber); // should be "definite update topmost frame", we 100% expect there to be a frame
 
         CfStepRequest request = stepRequestByThread.get(currentThread);
         if (request == null) {
@@ -724,6 +720,8 @@ public class DebugManager implements IDebugManager {
     }
 
     public void pushCfFrame(PageContext pageContext, String sourceFilePath) {
+        Thread t = Thread.currentThread();
+        System.out.println("[luceedebug] pushCfFrame: thread=" + t.getName() + " (id=" + t.getId() + ") identity=" + System.identityHashCode(t) + " file=" + sourceFilePath);
         maybe_pushCfFrame_worker(pageContext, sourceFilePath);
     }
     

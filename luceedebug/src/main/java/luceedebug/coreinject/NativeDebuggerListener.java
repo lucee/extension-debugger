@@ -147,10 +147,9 @@ public class NativeDebuggerListener {
 	private static volatile Consumer<Long> onNativeExceptionCallback = null;
 
 	/**
-	 * Flag to indicate native-only mode (no JDWP breakpoints).
-	 * When true, only native breakpoints are used.
+	 * Native mode flag - when true, use Lucee's DebuggerRegistry API.
 	 */
-	private static volatile boolean nativeOnlyMode = false;
+	private static volatile boolean nativeMode = false;
 
 	/**
 	 * Flag indicating a DAP client is actually connected.
@@ -242,18 +241,18 @@ public class NativeDebuggerListener {
 	}
 
 	/**
-	 * Enable native-only mode (skip JDWP breakpoint registration).
+	 * Cached reflection method for DebuggerFrame.getLine().
+	 * Initialized lazily on first use in getStackDepth().
 	 */
-	public static void setNativeOnlyMode(boolean enabled) {
-		nativeOnlyMode = enabled;
-		Log.info("Native-only mode: " + enabled);
+	private static volatile java.lang.reflect.Method debuggerFrameGetLineMethod = null;
+
+	public static void setNativeMode(boolean enabled) {
+		nativeMode = enabled;
+		Log.info("Native mode: " + enabled);
 	}
 
-	/**
-	 * Check if native-only mode is enabled.
-	 */
-	public static boolean isNativeOnlyMode() {
-		return nativeOnlyMode;
+	public static boolean isNativeMode() {
+		return nativeMode;
 	}
 
 	/**
@@ -480,10 +479,15 @@ public class NativeDebuggerListener {
 	 */
 	public static PageContext getPageContext(long javaThreadId) {
 		WeakReference<PageContext> ref = nativelySuspendedThreads.get(javaThreadId);
-		if (ref != null) {
-			return ref.get();
+		if (ref == null) {
+			Log.warn("getPageContext: thread " + javaThreadId + " not in map! Map=" + nativelySuspendedThreads.keySet());
+			return null;
 		}
-		return null;
+		PageContext pc = ref.get();
+		if (pc == null) {
+			Log.warn("getPageContext: PageContext for thread " + javaThreadId + " was GC'd!");
+		}
+		return pc;
 	}
 
 	/**
@@ -502,19 +506,23 @@ public class NativeDebuggerListener {
 	 * @return true if the thread was found and resumed, false otherwise
 	 */
 	public static boolean resumeNativeThread(long javaThreadId) {
+		Log.info("resumeNativeThread: thread=" + javaThreadId + ", map=" + nativelySuspendedThreads.keySet());
 		WeakReference<PageContext> pcRef = nativelySuspendedThreads.remove(javaThreadId);
 		if (pcRef == null) {
+			Log.warn("resumeNativeThread: thread " + javaThreadId + " not in map!");
 			return false;
 		}
 		PageContext pc = pcRef.get();
 		if (pc == null) {
+			Log.warn("resumeNativeThread: PageContext for thread " + javaThreadId + " was GC'd!");
 			return false;
 		}
-		Log.debug("Resuming thread: " + javaThreadId);
+		Log.info("resumeNativeThread: calling debuggerResume() for thread " + javaThreadId);
 		try {
 			// Call debuggerResume() via reflection (Lucee7+ method)
 			java.lang.reflect.Method resumeMethod = pc.getClass().getMethod("debuggerResume");
 			resumeMethod.invoke(pc);
+			Log.info("resumeNativeThread: debuggerResume() completed for thread " + javaThreadId);
 			return true;
 		} catch (NoSuchMethodException e) {
 			Log.error("debuggerResume() not available (pre-Lucee7?)");
@@ -602,12 +610,29 @@ public class NativeDebuggerListener {
 	/**
 	 * Get the current stack depth for a PageContext.
 	 * Uses reflection to get debugger frames.
+	 * Only counts frames with line > 0 to match NativeDebugFrame.getNativeFrames() filtering.
 	 */
 	public static int getStackDepth(PageContext pc) {
 		try {
 			java.lang.reflect.Method getFrames = pc.getClass().getMethod("getDebuggerFrames");
 			Object[] frames = (Object[]) getFrames.invoke(pc);
-			return frames != null ? frames.length : 0;
+			if (frames == null || frames.length == 0) return 0;
+
+			// Cache the getLine method on first use
+			java.lang.reflect.Method getLine = debuggerFrameGetLineMethod;
+			if (getLine == null) {
+				getLine = frames[0].getClass().getMethod("getLine");
+				debuggerFrameGetLineMethod = getLine;
+			}
+
+			// Count only frames with line > 0 (matching getNativeFrames filtering)
+			// Frames start with line=0 before first ExecutionLog.start() call
+			int count = 0;
+			for (Object frame : frames) {
+				int line = (int) getLine.invoke(frame);
+				if (line > 0) count++;
+			}
+			return count;
 		} catch (Exception e) {
 			// Log error - silent failure could cause incorrect step behavior
 			Log.error("Error getting stack depth: " + e.getMessage());
@@ -623,7 +648,7 @@ public class NativeDebuggerListener {
 	 */
 	public static void onSuspend(PageContext pc, String file, int line, String label) {
 		long threadId = Thread.currentThread().getId();
-		Log.debug("Suspend: thread=" + threadId + " file=" + Config.shortenPath(file) + " line=" + line + " label=" + label);
+		Log.info("onSuspend: thread=" + threadId + " file=" + Config.shortenPath(file) + " line=" + line);
 
 		// Check if we were stepping BEFORE clearing state
 		StepState stepState = steppingThreads.remove(threadId);
@@ -641,6 +666,7 @@ public class NativeDebuggerListener {
 		// Track the suspended thread so we can resume it later
 		// We store PageContext (not PageContextImpl) to avoid class loading cycles
 		nativelySuspendedThreads.put(threadId, new WeakReference<>(pc));
+		Log.info("onSuspend: added thread " + threadId + " to map, map=" + nativelySuspendedThreads.keySet());
 
 		// Store suspend location for stack trace (needed when no native DebuggerFrames exist)
 		// Include the exception if we're suspending due to one
@@ -1022,8 +1048,8 @@ public class NativeDebuggerListener {
 			return new int[0];
 		}
 		catch ( NoSuchMethodException e ) {
-			// Method doesn't exist - Lucee version without this feature
-			Log.debug( "getExecutableLines: method not found (old Lucee version?)" );
+			// Method only exists in debug-compiled classes - this shouldn't happen in debugger mode
+			Log.error( "getExecutableLines: compiled class for [" + absolutePath + "] is missing debug info (should be auto-generated in debugger mode)" );
 			return new int[0];
 		}
 		catch ( java.lang.reflect.InvocationTargetException e ) {

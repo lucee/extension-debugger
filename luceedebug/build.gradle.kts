@@ -89,7 +89,7 @@ tasks.jar {
                 "Premain-Class" to "luceedebug.Agent",
                 "Can-Redefine-Classes" to "true",
                 "Bundle-SymbolicName" to "luceedebug-osgi",
-                "Bundle-Version" to "2.0.1.1",
+                "Bundle-Version" to "3.0.0.0",
                 "Export-Package" to "luceedebug.*"
             )
         )

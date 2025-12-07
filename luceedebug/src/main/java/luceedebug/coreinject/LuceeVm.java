@@ -462,19 +462,6 @@ public class LuceeVm implements ILuceeVm {
             while (!done.get()); // about ~8ms to queueWork + wait for work to complete
         });
 
-        // Register native breakpoint suspend callback (Lucee7+)
-        NativeDebuggerListener.setOnNativeSuspendCallback((javaThreadId, label) -> {
-            if (nativeBreakpointEventCallback != null) {
-                nativeBreakpointEventCallback.accept(javaThreadId, label);
-            }
-        });
-
-        // Register native step callback (Lucee7+)
-        NativeDebuggerListener.setOnNativeStepCallback(javaThreadId -> {
-            if (stepEventCallback != null) {
-                stepEventCallback.accept(javaThreadId);
-            }
-        });
     }
 
     /**
@@ -741,7 +728,10 @@ public class LuceeVm implements ILuceeVm {
 
     public IDebugFrame[] getStackTrace(long jdwpThreadId) {
         var thread = threadMap_.getThreadByJdwpIdOrFail(new JdwpThreadID(jdwpThreadId));
-        return GlobalIDebugManagerHolder.debugManager.getCfStack(thread);
+        System.out.println("[luceedebug] getStackTrace: jdwpThreadId=" + jdwpThreadId + " -> thread=" + thread.getName() + " (id=" + thread.getId() + ") identity=" + System.identityHashCode(thread));
+        var frames = GlobalIDebugManagerHolder.debugManager.getCfStack(thread);
+        System.out.println("[luceedebug] getStackTrace: returning " + frames.length + " frames");
+        return frames;
     }
 
     public IDebugEntity[] getScopes(long frameID) {
@@ -819,25 +809,18 @@ public class LuceeVm implements ILuceeVm {
     }
 
     public IBreakpoint[] bindBreakpoints(RawIdePath idePath, CanonicalServerAbsPath serverPath, int[] lines, String[] exprs) {
-        // Register native breakpoints (Lucee7+)
-        // Clear existing native breakpoints for this file first
-        NativeDebuggerListener.clearBreakpointsForFile(serverPath.get());
-        for (int line : lines) {
-            NativeDebuggerListener.addBreakpoint(serverPath.get(), line);
-        }
-
-        // In native-only mode, skip JDWP breakpoint registration entirely
-        if (NativeDebuggerListener.isNativeOnlyMode()) {
-            // Return unbound breakpoints - native breakpoints don't have JDWP binding info
+        if (NativeDebuggerListener.isNativeMode()) {
+            NativeDebuggerListener.clearBreakpointsForFile(serverPath.get());
+            for (int line : lines) {
+                NativeDebuggerListener.addBreakpoint(serverPath.get(), line);
+            }
             var lineInfo = freshBpLineAndIdRecordsFromLines(idePath, serverPath, lines, exprs);
             IBreakpoint[] result = new Breakpoint[lineInfo.length];
             for (int i = 0; i < lineInfo.length; i++) {
-                // Mark as bound since native breakpoints are always "bound" (no class loading dependency)
                 result[i] = Breakpoint.Bound(lineInfo[i].line, lineInfo[i].id);
             }
             return result;
         }
-
         return __internal__bindBreakpoints(serverPath, freshBpLineAndIdRecordsFromLines(idePath, serverPath, lines, exprs));
     }
 
@@ -967,14 +950,10 @@ public class LuceeVm implements ILuceeVm {
     }
 
     public void clearAllBreakpoints() {
-        // Clear native breakpoints (Lucee7+)
-        NativeDebuggerListener.clearAllBreakpoints();
-
-        // In native-only mode, skip JDWP operations
-        if (NativeDebuggerListener.isNativeOnlyMode()) {
+        if (NativeDebuggerListener.isNativeMode()) {
+            NativeDebuggerListener.clearAllBreakpoints();
             return;
         }
-
         replayableBreakpointRequestsByAbsPath_.clear();
         vm_.eventRequestManager().deleteAllBreakpoints();
     }
@@ -1016,10 +995,10 @@ public class LuceeVm implements ILuceeVm {
     }
 
     public void continueAll() {
-        // Resume all natively suspended threads (Lucee7+ native breakpoints)
-        NativeDebuggerListener.resumeAllNativeThreads();
-
-        // Resume all JDWP suspended threads
+        if (NativeDebuggerListener.isNativeMode()) {
+            NativeDebuggerListener.resumeAllNativeThreads();
+            return;
+        }
         // avoid concurrent modification exceptions, calling continue_ mutates `suspendedThreads`
         Arrays
             // TODO: Set<T>.toArray(sz -> new T[sz]) is not typesafe, changing the type of Set<T>
@@ -1042,14 +1021,10 @@ public class LuceeVm implements ILuceeVm {
     }
 
     public void continue_(long threadID) {
-        // First, try to resume as a natively suspended thread (Lucee7+ native breakpoints)
-        // Native breakpoints use Java thread IDs directly
-        if (NativeDebuggerListener.resumeNativeThread(threadID)) {
-            System.out.println("[luceedebug] Resumed natively suspended thread: " + threadID);
+        if (NativeDebuggerListener.isNativeMode()) {
+            NativeDebuggerListener.resumeNativeThread(threadID);
             return;
         }
-
-        // Fall back to JDWP resume
         continue_(new JdwpThreadID(threadID));
     }
 

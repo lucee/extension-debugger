@@ -25,6 +25,7 @@ import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
 import org.eclipse.lsp4j.jsonrpc.util.ToStringBuilder;
 
 import luceedebug.coreinject.NativeDebuggerListener;
+import luceedebug.coreinject.NativeLuceeVm;
 import luceedebug.generated.Constants;
 import luceedebug.strong.CanonicalServerAbsPath;
 import luceedebug.strong.RawIdePath;
@@ -175,15 +176,20 @@ public class DapServer implements IDebugProtocolServer {
     }
 
     static public DapEntry createForSocket(ILuceeVm luceeVm, Config config, String host, int port) {
+        // Log immediately to confirm we entered the method
+        System.out.println("[luceedebug] createForSocket entered: host=" + host + ", port=" + port);
+
         // Shut down any existing server first (handles extension reinstall within same classloader)
         shutdown();
 
         ServerSocket server = null;
         try {
+            System.out.println("[luceedebug] Creating ServerSocket...");
             server = new ServerSocket();
             var addr = new InetSocketAddress(host, port);
             server.setReuseAddress(true);
 
+            System.out.println("[luceedebug] Binding to " + host + ":" + port);
             logger.finest("binding cf dap server socket on " + host + ":" + port);
 
             // Try to bind, with retries for port in use (OSGi bundle reload race condition)
@@ -209,20 +215,27 @@ public class DapServer implements IDebugProtocolServer {
             // Store in system properties so it survives classloader changes (OSGi bundle reload)
             System.getProperties().put(SOCKET_PROPERTY, server);
 
+            System.out.println("[luceedebug] DAP server socket bound successfully on " + host + ":" + port);
             logger.finest("dap server socket bind OK");
 
             while (true) {
+                System.out.println("[luceedebug] Waiting for DAP client connection on " + host + ":" + port + "...");
+                System.out.println("[luceedebug] ServerSocket state: bound=" + server.isBound() + ", closed=" + server.isClosed() + ", localPort=" + server.getLocalPort());
                 logger.finest("listening for inbound debugger connection on " + host + ":" + port + "...");
 
+                System.out.println("[luceedebug] Calling server.accept()...");
                 var socket = server.accept();
+                System.out.println("[luceedebug] accept() returned!");
                 var clientAddr = socket.getInetAddress().getHostAddress();
                 var clientPort = socket.getPort();
 
                 Log.info("DAP client connected from " + clientAddr + ":" + clientPort);
                 logger.finest("accepted debugger connection from " + clientAddr + ":" + clientPort);
 
-                // Mark DAP client as connected - enables breakpoint() BIF to suspend
-                luceedebug.coreinject.NativeDebuggerListener.setDapClientConnected(true);
+                // Mark DAP client as connected - enables breakpoint() BIF to suspend (native mode only)
+                if (luceeVm instanceof NativeLuceeVm) {
+                    luceedebug.coreinject.NativeDebuggerListener.setDapClientConnected(true);
+                }
 
                 try {
                     var rawIn = socket.getInputStream();
@@ -240,11 +253,14 @@ public class DapServer implements IDebugProtocolServer {
                 } catch (Exception e) {
                     Log.error("DAP client error: " + e.getClass().getName(), e);
                 } finally {
-                    // Mark DAP client as disconnected - disables breakpoint() BIF suspension
-                    luceedebug.coreinject.NativeDebuggerListener.setDapClientConnected(false);
-                    Log.setDapClient(null); // Disable DAP output
+                    // Clear DAP client FIRST to avoid broken pipe when setDapClientConnected logs
+                    Log.setDapClient(null);
+                    // Mark DAP client as disconnected - disables breakpoint() BIF suspension (native mode only)
+                    if (luceeVm instanceof NativeLuceeVm) {
+                        luceedebug.coreinject.NativeDebuggerListener.setDapClientConnected(false);
+                    }
                     try { socket.close(); } catch (Exception ignored) {}
-                    Log.debug("DAP client socket closed for " + clientAddr + ":" + clientPort);
+                    System.out.println("[luceedebug] Client socket closed, returning to accept loop");
                 }
 
                 logger.finest("debugger connection closed");
@@ -252,15 +268,19 @@ public class DapServer implements IDebugProtocolServer {
         }
         catch (java.net.SocketException e) {
             // Expected when shutdown() closes the socket
+            System.out.println("[luceedebug] DAP server SocketException: " + e.getMessage());
             Log.info("DAP server socket closed");
             return null;
         }
         catch (Throwable e) {
+            System.out.println("[luceedebug] DAP server fatal error: " + e.getClass().getName() + ": " + e.getMessage());
+            e.printStackTrace(System.out);
             e.printStackTrace();
             System.exit(1);
             return null;
         }
         finally {
+            System.out.println("[luceedebug] DAP server finally block executing");
             // Only clear if we're still the active server (avoid race with new server starting)
             if (activeServerSocket == server) {
                 activeServerSocket = null;
@@ -275,25 +295,38 @@ public class DapServer implements IDebugProtocolServer {
      * Uses reflection to avoid OSGi classloader identity issues.
      */
     public static void shutdown() {
+        // Log who's calling shutdown with a stack trace
+        System.out.println("[luceedebug] DapServer.shutdown() called");
+        System.out.println("[luceedebug] shutdown() caller stack trace:");
+        for (StackTraceElement ste : java.lang.Thread.currentThread().getStackTrace()) {
+            System.out.println("[luceedebug]   " + ste);
+        }
+        System.out.flush();
+
         // Try to get socket from JVM-wide properties (survives classloader changes)
         Object storedSocket = System.getProperties().get(SOCKET_PROPERTY);
         if (storedSocket != null) {
             // Use reflection - instanceof may fail across OSGi classloaders
+            System.out.println("[luceedebug] shutdown() - found socket in system properties, closing via reflection...");
             Log.debug("shutdown() - found socket in system properties, closing via reflection...");
             try {
                 java.lang.reflect.Method closeMethod = storedSocket.getClass().getMethod("close");
                 closeMethod.invoke(storedSocket);
+                System.out.println("[luceedebug] shutdown() - socket closed");
                 Log.debug("shutdown() - socket closed");
             } catch (Exception e) {
+                System.out.println("[luceedebug] shutdown() - socket close error: " + e);
                 Log.error("shutdown() - socket close error", e);
             }
             System.getProperties().remove(SOCKET_PROPERTY);
         } else {
+            System.out.println("[luceedebug] shutdown() - no socket in system properties");
             Log.debug("shutdown() - no socket in system properties");
         }
 
         // Also close our local static reference if set (same classloader case)
         if (activeServerSocket != null) {
+            System.out.println("[luceedebug] shutdown() - closing activeServerSocket");
             try {
                 activeServerSocket.close();
             } catch (Exception ignored) {}
@@ -320,18 +353,24 @@ public class DapServer implements IDebugProtocolServer {
         c.setSupportsHitConditionalBreakpoints(false); // still shows UI for it though
         c.setSupportsLogPoints(false); // still shows UI for it though
 
-        // Exception breakpoint filters
-        var uncaughtFilter = new ExceptionBreakpointsFilter();
-        uncaughtFilter.setFilter("uncaught");
-        uncaughtFilter.setLabel("Uncaught Exceptions");
-        uncaughtFilter.setDescription("Break when an exception is not caught by a try/catch block");
-        c.setExceptionBreakpointFilters(new ExceptionBreakpointsFilter[] { uncaughtFilter });
-        c.setSupportsExceptionInfoRequest(true);
-        c.setSupportsBreakpointLocationsRequest(true);
-        c.setSupportsSetVariable(true);
-        c.setSupportsCompletionsRequest(true);
-        c.setSupportsFunctionBreakpoints(true);
-        Log.debug("Returning capabilities with exceptionBreakpointFilters: " + java.util.Arrays.toString(c.getExceptionBreakpointFilters()));
+        // Native-mode-only capabilities (require Lucee 7.1+ DebuggerRegistry)
+        boolean isNativeMode = luceeVm_ instanceof NativeLuceeVm;
+
+        // Exception breakpoint filters - only supported in native mode
+        if (isNativeMode) {
+            var uncaughtFilter = new ExceptionBreakpointsFilter();
+            uncaughtFilter.setFilter("uncaught");
+            uncaughtFilter.setLabel("Uncaught Exceptions");
+            uncaughtFilter.setDescription("Break when an exception is not caught by a try/catch block");
+            c.setExceptionBreakpointFilters(new ExceptionBreakpointsFilter[] { uncaughtFilter });
+        }
+        c.setSupportsExceptionInfoRequest(isNativeMode);
+        c.setSupportsBreakpointLocationsRequest(isNativeMode);
+        c.setSupportsSetVariable(isNativeMode);
+        c.setSupportsCompletionsRequest(isNativeMode);
+        c.setSupportsFunctionBreakpoints(isNativeMode);
+
+        Log.debug("Returning capabilities (nativeMode=" + isNativeMode + ") with exceptionBreakpointFilters: " + java.util.Arrays.toString(c.getExceptionBreakpointFilters()));
 
         return CompletableFuture.completedFuture(c);
     }
@@ -405,8 +444,10 @@ public class DapServer implements IDebugProtocolServer {
 
         // Validate secret from launch.json
         if (!validateSecret(args)) {
-            clientProxy_.terminated(new org.eclipse.lsp4j.debug.TerminatedEventArguments());
-            return CompletableFuture.completedFuture(null);
+            var result = new CompletableFuture<Void>();
+            var error = new ResponseError(ResponseErrorCode.InvalidRequest, "Invalid or missing secret", null);
+            result.completeExceptionally(new ResponseErrorException(error));
+            return result;
         }
 
         pathTransforms = tryMungePathTransforms(args.get("pathTransforms"));
@@ -456,21 +497,30 @@ public class DapServer implements IDebugProtocolServer {
         }
 
         // Try native mode first (Lucee 7.1+ extension)
+        // The class exists in both modes (shadow JAR), but isNativeModeActive() returns true
+        // only if the extension was actually loaded by Lucee's startup-hook mechanism.
         try {
             Class<?> activatorClass = Class.forName("luceedebug.extension.ExtensionActivator");
-            java.lang.reflect.Method registerMethod = activatorClass.getMethod("registerListener", String.class);
-            Boolean registered = (Boolean) registerMethod.invoke(null, clientSecret);
-            if (registered) {
-                secretValidated = true;
-                return true;
-            } else {
-                Log.error("Failed to register debugger - invalid secret");
-                return false;
+            java.lang.reflect.Method isNativeMethod = activatorClass.getMethod("isNativeModeActive");
+            Boolean isNative = (Boolean) isNativeMethod.invoke(null);
+
+            if (isNative) {
+                // We're in native mode - use ExtensionActivator to register
+                java.lang.reflect.Method registerMethod = activatorClass.getMethod("registerListener", String.class);
+                Boolean registered = (Boolean) registerMethod.invoke(null, clientSecret);
+                if (registered) {
+                    secretValidated = true;
+                    return true;
+                } else {
+                    Log.error("Failed to register debugger - invalid secret");
+                    return false;
+                }
             }
-        } catch (ClassNotFoundException e) {
             // Not in native mode, fall through to agent mode validation
+        } catch (ClassNotFoundException e) {
+            // Class not found - shouldn't happen with shadow JAR but fall through anyway
         } catch (Exception e) {
-            Log.error("Error calling ExtensionActivator.registerListener", e);
+            Log.error("Error checking native mode status", e);
             return false;
         }
 
@@ -493,14 +543,38 @@ public class DapServer implements IDebugProtocolServer {
     }
 
     /**
+     * Helper to reject requests when not authorized.
+     * Returns a failed CompletableFuture with appropriate error message.
+     */
+    private <T> CompletableFuture<T> notAuthorized() {
+        var result = new CompletableFuture<T>();
+        var error = new ResponseError(ResponseErrorCode.InvalidRequest, "Not authorized - call 'attach' with valid secret first", null);
+        result.completeExceptionally(new ResponseErrorException(error));
+        return result;
+    }
+
+    /**
+     * Simple boolean conversion without depending on Lucee's Cast utility.
+     * Handles Boolean, String ("true"/"false"), and defaults.
+     */
+    private static boolean toBooleanValue(Object obj, boolean defaultValue) {
+        if (obj == null) return defaultValue;
+        if (obj instanceof Boolean) return (Boolean) obj;
+        if (obj instanceof String) {
+            String s = ((String) obj).toLowerCase().trim();
+            if ("true".equals(s) || "yes".equals(s) || "1".equals(s)) return true;
+            if ("false".equals(s) || "no".equals(s) || "0".equals(s)) return false;
+        }
+        return defaultValue;
+    }
+
+    /**
      * Configure logging from launch.json settings.
      * Supports: logColor (boolean), logLevel (error|info|debug), logExceptions (boolean), logSystemOutput (boolean)
      */
     private void configureLogging(Map<String, Object> args) {
-        lucee.runtime.util.Cast caster = lucee.loader.engine.CFMLEngineFactory.getInstance().getCastUtil();
-
         // logColor - default true
-        Log.setColorLogs(caster.toBooleanValue(args.get("logColor"), true));
+        Log.setColorLogs(toBooleanValue(args.get("logColor"), true));
 
         // logLevel - error, info, debug
         Object logLevel = args.get("logLevel");
@@ -521,16 +595,21 @@ public class DapServer implements IDebugProtocolServer {
         }
 
         // logExceptions - default false
-        Log.setLogExceptions(caster.toBooleanValue(args.get("logExceptions"), false));
+        Log.setLogExceptions(toBooleanValue(args.get("logExceptions"), false));
 
         // consoleOutput - default false (streams System.out/err to debug console)
-        NativeDebuggerListener.setConsoleOutput(caster.toBooleanValue(args.get("consoleOutput"), false));
+        // Only available in native mode
+        if (luceeVm_ instanceof NativeLuceeVm) {
+            NativeDebuggerListener.setConsoleOutput(toBooleanValue(args.get("consoleOutput"), false));
+        }
     }
 
     static final Pattern threadNamePrefixAndDigitSuffix = Pattern.compile("^(.+?)(\\d+)$");
 
     @Override
     public CompletableFuture<ThreadsResponse> threads() {
+        if (!secretValidated) return notAuthorized();
+
         var lspThreads = new ArrayList<org.eclipse.lsp4j.debug.Thread>();
 
         for (var threadInfo : luceeVm_.getThreadListing()) {
@@ -573,6 +652,8 @@ public class DapServer implements IDebugProtocolServer {
 
     @Override
     public CompletableFuture<StackTraceResponse> stackTrace(StackTraceArguments args) {
+        if (!secretValidated) return notAuthorized();
+
         var lspFrames = new ArrayList<org.eclipse.lsp4j.debug.StackFrame>();
 
         for (var cfFrame : luceeVm_.getStackTrace(args.getThreadId())) {
@@ -600,6 +681,8 @@ public class DapServer implements IDebugProtocolServer {
 
     @Override
 	public CompletableFuture<ScopesResponse> scopes(ScopesArguments args) {
+        if (!secretValidated) return notAuthorized();
+
         var scopes = new ArrayList<Scope>();
         for (var entity : luceeVm_.getScopes(args.getFrameId())) {
             var scope = new Scope();
@@ -617,6 +700,8 @@ public class DapServer implements IDebugProtocolServer {
 
 	@Override
 	public CompletableFuture<VariablesResponse> variables(VariablesArguments args) {
+        if (!secretValidated) return notAuthorized();
+
         var variables = new ArrayList<Variable>();
         IDebugEntity[] entities = args.getFilter() == null
             ? luceeVm_.getVariables(args.getVariablesReference())
@@ -644,13 +729,7 @@ public class DapServer implements IDebugProtocolServer {
 	public CompletableFuture<SetVariableResponse> setVariable(SetVariableArguments args) {
 		Log.debug("setVariable() called: variablesReference=" + args.getVariablesReference() + ", name=" + args.getName() + ", value=" + args.getValue());
 
-		// Don't allow setting variables if secret wasn't validated
-		if (!secretValidated) {
-			var exceptionalResult = new CompletableFuture<SetVariableResponse>();
-			var error = new ResponseError(ResponseErrorCode.InvalidRequest, "Not authorized - secret not validated", null);
-			exceptionalResult.completeExceptionally(new ResponseErrorException(error));
-			return exceptionalResult;
-		}
+		if (!secretValidated) return notAuthorized();
 
 		return luceeVm_
 			.setVariable(args.getVariablesReference(), args.getName(), args.getValue(), 0)
@@ -695,12 +774,7 @@ public class DapServer implements IDebugProtocolServer {
 
     @Override
     public CompletableFuture<SetBreakpointsResponse> setBreakpoints(SetBreakpointsArguments args) {
-        // Don't accept breakpoints if secret wasn't validated
-        if (!secretValidated) {
-            var response = new SetBreakpointsResponse();
-            response.setBreakpoints(new Breakpoint[0]);
-            return CompletableFuture.completedFuture(response);
-        }
+        if (!secretValidated) return notAuthorized();
 
         final var idePath = new RawIdePath(args.getSource().getPath());
         final var serverAbsPath = new CanonicalServerAbsPath(applyPathTransformsIdeToCf(args.getSource().getPath()));
@@ -736,6 +810,8 @@ public class DapServer implements IDebugProtocolServer {
 
     @Override
     public CompletableFuture<BreakpointLocationsResponse> breakpointLocations(BreakpointLocationsArguments args) {
+        if (!secretValidated) return notAuthorized();
+
         var response = new BreakpointLocationsResponse();
 
         // Only works in native mode with NativeLuceeVm
@@ -779,6 +855,8 @@ public class DapServer implements IDebugProtocolServer {
      */
     @Override
 	public CompletableFuture<SetExceptionBreakpointsResponse> setExceptionBreakpoints(SetExceptionBreakpointsArguments args) {
+		if (!secretValidated) return notAuthorized();
+
 		// Check if "uncaught" is in the filters
 		String[] filters = args.getFilters();
 		Log.debug("setExceptionBreakpoints: filters=" + java.util.Arrays.toString(filters));
@@ -791,7 +869,10 @@ public class DapServer implements IDebugProtocolServer {
 				}
 			}
 		}
-		NativeDebuggerListener.setBreakOnUncaughtExceptions(breakOnUncaught);
+		// Only works in native mode - NativeDebuggerListener doesn't exist in agent mode
+		if (luceeVm_ instanceof NativeLuceeVm) {
+			NativeDebuggerListener.setBreakOnUncaughtExceptions(breakOnUncaught);
+		}
 		return CompletableFuture.completedFuture(new SetExceptionBreakpointsResponse());
 	}
 
@@ -806,6 +887,13 @@ public class DapServer implements IDebugProtocolServer {
 	@Override
 	public CompletableFuture<SetFunctionBreakpointsResponse> setFunctionBreakpoints(
 			SetFunctionBreakpointsArguments args) {
+		if (!secretValidated) return notAuthorized();
+
+		// Only works in native mode - NativeDebuggerListener doesn't exist in agent mode
+		if (!(luceeVm_ instanceof NativeLuceeVm)) {
+			return CompletableFuture.completedFuture(new SetFunctionBreakpointsResponse());
+		}
+
 		FunctionBreakpoint[] bps = args.getBreakpoints();
 		Log.debug("setFunctionBreakpoints: " + (bps != null ? bps.length : 0) + " breakpoints");
 
@@ -847,6 +935,8 @@ public class DapServer implements IDebugProtocolServer {
 	 */
 	@Override
 	public CompletableFuture<ExceptionInfoResponse> exceptionInfo(ExceptionInfoArguments args) {
+		if (!secretValidated) return notAuthorized();
+
 		Log.debug("exceptionInfo() called for thread " + args.getThreadId());
 		Throwable ex = luceeVm_.getExceptionForThread(args.getThreadId());
 		var response = new ExceptionInfoResponse();
@@ -890,6 +980,8 @@ public class DapServer implements IDebugProtocolServer {
      */
 	@Override
 	public CompletableFuture<Void> pause(PauseArguments args) {
+		if (!secretValidated) return notAuthorized();
+
 		long threadId = args.getThreadId();
 		Log.info("pause() called for thread " + threadId);
 		// Thread ID 0 means "pause all threads" - this happens when user clicks
@@ -908,24 +1000,28 @@ public class DapServer implements IDebugProtocolServer {
 
     @Override
 	public CompletableFuture<ContinueResponse> continue_(ContinueArguments args) {
+		if (!secretValidated) return notAuthorized();
 		luceeVm_.continue_(args.getThreadId());
         return CompletableFuture.completedFuture(new ContinueResponse());
 	}
 
     @Override
 	public CompletableFuture<Void> next(NextArguments args) {
+		if (!secretValidated) return notAuthorized();
 		luceeVm_.stepOver(args.getThreadId());
         return CompletableFuture.completedFuture(null);
 	}
 
     @Override
 	public CompletableFuture<Void> stepIn(StepInArguments args) {
+		if (!secretValidated) return notAuthorized();
         luceeVm_.stepIn(args.getThreadId());
 		return CompletableFuture.completedFuture(null);
 	}
 
 	@Override
 	public CompletableFuture<Void> stepOut(StepOutArguments args) {
+		if (!secretValidated) return notAuthorized();
         luceeVm_.stepOut(args.getThreadId());
 		return CompletableFuture.completedFuture(null);
 	}
@@ -1004,6 +1100,7 @@ public class DapServer implements IDebugProtocolServer {
 
     @JsonRequest
 	CompletableFuture<DumpResponse> dump(DumpArguments args) {
+        if (!secretValidated) return notAuthorized();
         final var response = new DumpResponse();
         response.setContent(luceeVm_.dump(args.variablesReference));
         return CompletableFuture.completedFuture(response);
@@ -1011,6 +1108,7 @@ public class DapServer implements IDebugProtocolServer {
 
     @JsonRequest
 	CompletableFuture<DumpResponse> dumpAsJSON(DumpArguments args) {
+        if (!secretValidated) return notAuthorized();
         final var response = new DumpResponse();
         response.setContent(luceeVm_.dumpAsJSON(args.variablesReference));
         return CompletableFuture.completedFuture(response);
@@ -1018,6 +1116,7 @@ public class DapServer implements IDebugProtocolServer {
 
     @JsonRequest
 	CompletableFuture<DumpResponse> getMetadata(DumpArguments args) {
+        if (!secretValidated) return notAuthorized();
         final var response = new DumpResponse();
         response.setContent(luceeVm_.getMetadata(args.variablesReference));
         return CompletableFuture.completedFuture(response);
@@ -1025,6 +1124,7 @@ public class DapServer implements IDebugProtocolServer {
 
     @JsonRequest
 	CompletableFuture<DumpResponse> getApplicationSettings(DumpArguments args) {
+        if (!secretValidated) return notAuthorized();
         final var response = new DumpResponse();
         response.setContent(luceeVm_.getApplicationSettings());
         return CompletableFuture.completedFuture(response);
@@ -1118,6 +1218,7 @@ public class DapServer implements IDebugProtocolServer {
 
     @JsonRequest
 	CompletableFuture<DebugBreakpointBindingsResponse> debugBreakpointBindings(DebugBreakpointBindingsArguments args) {
+        if (!secretValidated) return notAuthorized();
         final var response = new DebugBreakpointBindingsResponse();
         response.setCanonicalFilenames(luceeVm_.getTrackedCanonicalFileNames());
         response.setBreakpoints(luceeVm_.getBreakpointDetail());
@@ -1211,6 +1312,7 @@ public class DapServer implements IDebugProtocolServer {
 
     @JsonRequest
 	CompletableFuture<GetSourcePathResponse> getSourcePath(GetSourcePathArguments args) {
+        if (!secretValidated) return notAuthorized();
         final var response = new GetSourcePathResponse();
         final var serverPath = luceeVm_.getSourcePathForVariablesRef(args.getVariablesReference());
 
@@ -1227,6 +1329,8 @@ public class DapServer implements IDebugProtocolServer {
     static private AtomicLong anonymousID = new AtomicLong();
 
     public CompletableFuture<EvaluateResponse> evaluate(EvaluateArguments args) {
+        if (!secretValidated) return notAuthorized();
+
         final String expr = args.getExpression();
         final String context = args.getContext(); // "hover", "watch", "repl", or null
         final boolean isHover = "hover".equals(context);
@@ -1292,6 +1396,8 @@ public class DapServer implements IDebugProtocolServer {
 
     @Override
     public CompletableFuture<CompletionsResponse> completions(CompletionsArguments args) {
+        if (!secretValidated) return notAuthorized();
+
         final String text = args.getText();
         final int column = args.getColumn();
         final Integer frameId = args.getFrameId();
@@ -1333,12 +1439,15 @@ public class DapServer implements IDebugProtocolServer {
 
     /**
      * Get the Lucee version string (e.g., "7.0.1.7-ALPHA").
+     * In agent mode, Lucee classes may not be accessible, so we catch Throwable.
      */
     private static String getLuceeVersion() {
         try {
             lucee.Info info = lucee.loader.engine.CFMLEngineFactory.getInstance().getInfo();
             return info.getVersion().toString();
-        } catch (Exception e) {
+        } catch (Throwable t) {
+            // NoClassDefFoundError is an Error, not Exception - need to catch Throwable
+            // This happens in agent mode where Lucee's classloader is separate
             return "unknown";
         }
     }

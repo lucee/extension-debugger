@@ -52,8 +52,8 @@ public class NativeLuceeVm implements ILuceeVm {
 	public NativeLuceeVm(Config config) {
 		this.config_ = config;
 
-		// Enable native-only mode
-		NativeDebuggerListener.setNativeOnlyMode(true);
+		// Enable native mode
+		NativeDebuggerListener.setNativeMode(true);
 
 		// Register native breakpoint suspend callback
 		NativeDebuggerListener.setOnNativeSuspendCallback((javaThreadId, label) -> {
@@ -336,10 +336,11 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	/**
 	 * Get the current stack depth for a thread using native debugger frames.
+	 * Uses NativeDebuggerListener.getStackDepth() to count only real frames (not synthetic).
 	 */
 	private int getStackDepthForThread(long threadID) {
-		IDebugFrame[] frames = getStackTrace(threadID);
-		return frames != null ? frames.length : 0;
+		PageContext pc = NativeDebuggerListener.getPageContext(threadID);
+		return pc != null ? NativeDebuggerListener.getStackDepth(pc) : 0;
 	}
 
 	// ========== Debug utilities ==========
