@@ -523,8 +523,8 @@ public class DapServer implements IDebugProtocolServer {
         // logExceptions - default false
         Log.setLogExceptions(caster.toBooleanValue(args.get("logExceptions"), false));
 
-        // logSystemOutput - default false
-        NativeDebuggerListener.setLogSystemOutput(caster.toBooleanValue(args.get("logSystemOutput"), false));
+        // consoleOutput - default false (streams System.out/err to debug console)
+        NativeDebuggerListener.setConsoleOutput(caster.toBooleanValue(args.get("consoleOutput"), false));
     }
 
     static final Pattern threadNamePrefixAndDigitSuffix = Pattern.compile("^(.+?)(\\d+)$");

@@ -29,7 +29,7 @@ public class Log {
 	private static volatile boolean colorLogs = true;
 	private static volatile LogLevel logLevel = LogLevel.INFO;
 	private static volatile boolean logExceptions = false;
-	private static volatile boolean logSystemOutput = false;
+	private static volatile boolean consoleOutput = false;
 
 	// Internal debugging - only enabled via env var LUCEE_DEBUGGER_DEBUG
 	private static final boolean internalDebug;
@@ -85,12 +85,12 @@ public class Log {
 	}
 
 	/**
-	 * Set system output logging from launch.json.
+	 * Set console output streaming from launch.json.
 	 * When enabled, we skip sending directly to DAP since System.out/err
 	 * will be captured and forwarded via systemOutput().
 	 */
-	public static void setLogSystemOutput(boolean enabled) {
-		logSystemOutput = enabled;
+	public static void setConsoleOutput(boolean enabled) {
+		consoleOutput = enabled;
 	}
 
 	/**
@@ -101,9 +101,9 @@ public class Log {
 		if (!LogLevel.INFO.isEnabled(logLevel)) {
 			return;
 		}
-		// When logSystemOutput is enabled, skip System.out (it gets captured and
+		// When consoleOutput is enabled, skip System.out (it gets captured and
 		// forwarded to DAP, causing double-logging). Send directly to DAP instead.
-		if (!logSystemOutput) {
+		if (!consoleOutput) {
 			String consoleMsg;
 			if (colorLogs) {
 				consoleMsg = ANSI_CYAN + PREFIX + ANSI_RESET + message;
@@ -119,7 +119,7 @@ public class Log {
 	 * Log an error message. Always logged regardless of log level.
 	 */
 	public static void error(String message) {
-		if (!logSystemOutput) {
+		if (!consoleOutput) {
 			String consoleMsg;
 			if (colorLogs) {
 				consoleMsg = ANSI_RED + PREFIX + "ERROR: " + message + ANSI_RESET;
@@ -148,7 +148,7 @@ public class Log {
 		if (!internalDebug) {
 			return;
 		}
-		if (!logSystemOutput) {
+		if (!consoleOutput) {
 			String consoleMsg;
 			if (colorLogs) {
 				consoleMsg = ANSI_DIM + PREFIX + "DEBUG: " + message + ANSI_RESET;
@@ -169,7 +169,7 @@ public class Log {
 		if (!internalDebug) {
 			return;
 		}
-		if (!logSystemOutput) {
+		if (!consoleOutput) {
 			String consoleMsg;
 			if (colorLogs) {
 				consoleMsg = ANSI_DIM + PREFIX + "TRACE: " + message + ANSI_RESET;
@@ -190,7 +190,7 @@ public class Log {
 		if (!LogLevel.INFO.isEnabled(logLevel)) {
 			return;
 		}
-		if (!logSystemOutput) {
+		if (!consoleOutput) {
 			String consoleMsg;
 			if (colorLogs) {
 				consoleMsg = ANSI_YELLOW + PREFIX + "WARN: " + message + ANSI_RESET;
@@ -229,7 +229,7 @@ public class Log {
 
 	/**
 	 * Forward System.out/err output to DAP client.
-	 * Called by NativeDebuggerListener.onOutput() when logSystemOutput is enabled.
+	 * Called by NativeDebuggerListener.onOutput() when consoleOutput is enabled.
 	 * Does NOT echo to console (would cause infinite loop).
 	 *
 	 * @param text The text that was written

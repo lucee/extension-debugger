@@ -355,9 +355,9 @@ public class NativeDebugFrame implements IDebugFrame {
 		}
 
 		try {
-			// Check if DEBUGGER_ENABLED is true (via env var)
+			// Check if debugger is enabled (via LUCEE_DEBUGGER_SECRET env var)
 			if ( !EnvUtil.isDebuggerEnabled() ) {
-				Log.info( "Native frame support disabled: LUCEE_DEBUGGER_ENABLED not set" );
+				Log.info( "Native frame support disabled: LUCEE_DEBUGGER_SECRET not set" );
 				nativeFrameSupportAvailable = false;
 				return false;
 			}

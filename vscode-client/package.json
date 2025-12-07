@@ -194,10 +194,10 @@
                 "default": false,
                 "description": "Log exceptions to the debug console."
               },
-              "logSystemOutput": {
+              "consoleOutput": {
                 "type": "boolean",
                 "default": false,
-                "description": "Show System.out/err in the debug console."
+                "description": "Stream console output to the debug console (Lucee 7.1+)."
               },
               "secret": {
                 "type": "string",

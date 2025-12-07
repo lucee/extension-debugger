@@ -167,9 +167,9 @@ public class NativeDebuggerListener {
 
 	/**
 	 * Flag to forward System.out/err to DAP client.
-	 * Set via launch.json logSystemOutput option.
+	 * Set via launch.json consoleOutput option.
 	 */
-	private static volatile boolean logSystemOutput = false;
+	private static volatile boolean consoleOutput = false;
 
 	/**
 	 * Fast-path flag: true when there's anything that could cause a suspend.
@@ -733,7 +733,7 @@ public class NativeDebuggerListener {
 
 		// Reset exception settings
 		breakOnUncaughtExceptions = false;
-		logSystemOutput = false;
+		consoleOutput = false;
 
 		// Note: We intentionally keep breakpoints - they'll be inactive
 		// since dapClientConnected=false, and will be replaced on next connect
@@ -762,20 +762,20 @@ public class NativeDebuggerListener {
 	 * Set whether to forward System.out/err to DAP client.
 	 * Called from DapServer when handling attach request.
 	 */
-	public static void setLogSystemOutput(boolean enabled) {
-		logSystemOutput = enabled;
-		Log.setLogSystemOutput(enabled);
+	public static void setConsoleOutput(boolean enabled) {
+		consoleOutput = enabled;
+		Log.setConsoleOutput(enabled);
 	}
 
 	/**
 	 * Called by Lucee's DebuggerPrintStream when output is written to System.out/err.
-	 * Forwards to DAP client if logSystemOutput is enabled.
+	 * Forwards to DAP client if consoleOutput is enabled.
 	 *
 	 * @param text The text that was written
 	 * @param isStdErr true if stderr, false if stdout
 	 */
 	public static void onOutput(String text, boolean isStdErr) {
-		if (!logSystemOutput || !dapClientConnected) {
+		if (!consoleOutput || !dapClientConnected) {
 			return;
 		}
 		Log.systemOutput(text, isStdErr);
