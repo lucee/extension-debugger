@@ -44,7 +44,7 @@ public class ExtensionActivator {
 			// Get debug port - if not set, debugger is disabled
 			int debugPort = EnvUtil.getDebuggerPort();
 			if (debugPort < 0) {
-				Log.info("Debugger disabled - set LUCEE_DEBUGGER_SECRET to enable");
+				Log.info("Debugger disabled - set LUCEE_DAP_SECRET to enable");
 				return;
 			}
 			Log.info("Extension activating");

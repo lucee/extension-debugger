@@ -190,13 +190,13 @@ jobs:
 
       - name: Configure debuggee setenv.sh
         run: |
-          echo 'export LUCEE_DEBUGGER_SECRET=testing' >> debuggee/bin/setenv.sh
-          echo 'export LUCEE_DEBUGGER_PORT=10000' >> debuggee/bin/setenv.sh
+          echo 'export LUCEE_DAP_SECRET=testing' >> debuggee/bin/setenv.sh
+          echo 'export LUCEE_DAP_PORT=10000' >> debuggee/bin/setenv.sh
           echo 'export LUCEE_LOGGING_FORCE_LEVEL=trace' >> debuggee/bin/setenv.sh
           # Enable Felix OSGi debug logging to diagnose bundle unload
           echo 'export FELIX_LOG_LEVEL=debug' >> debuggee/bin/setenv.sh
           # Enable luceedebug internal debug logging
-          echo 'export LUCEE_DEBUGGER_DEBUG=true' >> debuggee/bin/setenv.sh
+          echo 'export LUCEE_DAP_DEBUG=true' >> debuggee/bin/setenv.sh
           chmod +x debuggee/bin/setenv.sh
 
       - name: Warmup debuggee (Lucee Express)
@@ -375,15 +375,22 @@ jobs:
           echo "AGENT_JAR=$AGENT_JAR" >> $GITHUB_ENV
           cp $AGENT_JAR debuggee/
 
+      - name: Upload agent JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: luceedebug-agent
+          path: luceedebug/build/libs/luceedebug-*.jar
+          retention-days: 1
+
       - name: Configure debuggee for agent mode
         run: |
           AGENT_JAR_NAME=$(basename $AGENT_JAR)
           # Add JVM args for JDWP and luceedebug agent
           # Secret is read from env var at connection time, not javaagent args
-          echo "export LUCEE_DEBUGGER_SECRET=testing" >> debuggee/bin/setenv.sh
+          echo "export LUCEE_DAP_SECRET=testing" >> debuggee/bin/setenv.sh
           echo "export LUCEE_LOGGING_FORCE_LEVEL=trace" >> debuggee/bin/setenv.sh
           # Enable luceedebug internal debug logging
-          echo "export LUCEE_DEBUGGER_DEBUG=true" >> debuggee/bin/setenv.sh
+          echo "export LUCEE_DAP_DEBUG=true" >> debuggee/bin/setenv.sh
           echo "export CATALINA_OPTS=\"\$CATALINA_OPTS -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=localhost:9999\"" >> debuggee/bin/setenv.sh
           echo "export CATALINA_OPTS=\"\$CATALINA_OPTS -javaagent:\$CATALINA_HOME/$AGENT_JAR_NAME=jdwpHost=localhost,jdwpPort=9999,debugHost=0.0.0.0,debugPort=10000,jarPath=\$CATALINA_HOME/$AGENT_JAR_NAME\"" >> debuggee/bin/setenv.sh
           chmod +x debuggee/bin/setenv.sh

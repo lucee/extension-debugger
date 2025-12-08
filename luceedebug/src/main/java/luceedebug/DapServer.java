@@ -354,9 +354,10 @@ public class DapServer implements IDebugProtocolServer {
         c.setSupportsLogPoints(false); // still shows UI for it though
 
         // Native-mode-only capabilities (require Lucee 7.1+ DebuggerRegistry)
-        boolean isNativeMode = luceeVm_ instanceof NativeLuceeVm;
+        // Also check if debugger is actually enabled (LUCEE_DAP_BREAKPOINT not set to false)
+        boolean isNativeMode = luceeVm_ instanceof NativeLuceeVm && EnvUtil.isDebuggerEnabled();
 
-        // Exception breakpoint filters - only supported in native mode
+        // Exception breakpoint filters - only supported in native mode with debugger enabled
         if (isNativeMode) {
             var uncaughtFilter = new ExceptionBreakpointsFilter();
             uncaughtFilter.setFilter("uncaught");
@@ -529,7 +530,7 @@ public class DapServer implements IDebugProtocolServer {
         if (expectedSecret == null) {
             // No secret configured on server - allow any secret for backwards compatibility?
             // No - require secret to be set for security
-            Log.error("LUCEE_DEBUGGER_SECRET not set on server");
+            Log.error("LUCEE_DAP_SECRET not set on server");
             return false;
         }
 

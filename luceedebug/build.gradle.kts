@@ -89,14 +89,14 @@ tasks.jar {
                 "Premain-Class" to "luceedebug.Agent",
                 "Can-Redefine-Classes" to "true",
                 "Bundle-SymbolicName" to "luceedebug-osgi",
-                "Bundle-Version" to "3.0.0.0",
+                "Bundle-Version" to "3.0.0.0-BETA",
                 "Export-Package" to "luceedebug.*"
             )
         )
     }
 }
 
-val luceedebugVersion = "3.0.0"
+val luceedebugVersion = "3.0.0-BETA"
 val libfile = "luceedebug-" + luceedebugVersion + ".jar"
 
 // TODO: this should, but does not currently, participate in the `clean` task, so the generated file sticks around after invoking `clean`.

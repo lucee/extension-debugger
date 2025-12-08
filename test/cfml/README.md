@@ -24,7 +24,7 @@ Use your existing Lucee dev server with luceedebug, or use Lucee Express:
 
 1. Download express template from [Lucee Express Templates](https://update.lucee.org/rest/update/provider/expressTemplates)
 2. Drop your Lucee JAR in `lib/`
-3. Set env vars: `LUCEE_DEBUGGER_SECRET=testing` and `LUCEE_DEBUGGER_PORT=10000`
+3. Set env vars: `LUCEE_DAP_SECRET=testing` and `LUCEE_DAP_PORT=10000`
 4. Start Tomcat on port 8888
 
 ### Step 2: Run the Tests
