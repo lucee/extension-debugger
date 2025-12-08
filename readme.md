@@ -1,13 +1,20 @@
-# luceedebug
+# Extension-Debugger
 
-luceedebug is a step debugger for Lucee.
+*PRE-RELEASE*
+
+This is a step debugger, for Lucee based on the [LuceeDebug](https://github.com/softwareCobbler/luceedebug) project
+
+For Lucee 7.1, rather than as Java Agent, it's now a Lucee Extension, easy to install, enabled via an ENV VAR.
+
+For older versions, the agent version is still supported.
 
 ![misc. features of a debug session indicating that luceedebug is a step debugger for Lucee.](assets/whatisit.png)
 
-There are two components:
+There are three components:
 
-- A Java agent
-- A VS Code extension
+- A Lucee Extension (7.1+)
+- A Java agent (Lucee 5.4 - 7.0)
+- [A VS Code extension](https://marketplace.visualstudio.com/items?itemName=DavidRogers.luceedebug)
 
 The java agent needs a particular invocation and needs to be run as part of the JVM/Lucee server startup.
 
@@ -229,4 +236,5 @@ If breakpoints aren't binding, you can inspect what's going using the "luceedebu
 
 ```sh
 ./gradlew dependencyCheckAnalyze
+
 ```
