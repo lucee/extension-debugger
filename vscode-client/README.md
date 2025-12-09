@@ -1,3 +1,5 @@
-This is a barebones client for the 'luceedebug' backend, enabling breakpoints for {.cfm,.cfc,.cfml} files.
+# luceedebug VS Code Extension
 
-This requires the associated java agent be run as part of your Lucee JVM startup. You can download the agent jar from https://github.com/softwareCobbler/luceedebug/releases/latest or clone https://github.com/softwareCobbler/luceedebug and build it yourself.
+VS Code debugger extension for luceedebug, enabling breakpoints for {.cfm,.cfc,.cfml} files.
+
+For setup instructions, see the main repository: [lucee/extension-debugger](https://github.com/lucee/extension-debugger)

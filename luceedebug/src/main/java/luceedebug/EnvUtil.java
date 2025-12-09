@@ -76,12 +76,12 @@ public final class EnvUtil {
 		}
 		String port = getSystemPropOrEnvVar("lucee.dap.port");
 		if (port == null || port.isEmpty()) {
-			return 9999; // default port
+			return 10000; // default port
 		}
 		try {
 			return Integer.parseInt(port);
 		} catch (NumberFormatException e) {
-			return 9999;
+			return 10000;
 		}
 	}
 }

@@ -17,5 +17,6 @@ test/scratch
 .claude/
 *.md
 !README.md
+!JAVA_AGENT.md
 build-output.txt
 test-output.txt
