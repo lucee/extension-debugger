@@ -181,9 +181,21 @@ function triggerArtifact( required string filename, struct params = {}, boolean 
 	}
 }
 
-function waitForHttpComplete( numeric timeout = 30000 ) {
+function waitForHttpComplete( numeric timeout = 5000 ) {
 	if ( len( variables.httpThread ) ) {
-		threadJoin( variables.httpThread, arguments.timeout );
+		var startTime = getTickCount();
+		var threadName = variables.httpThread;
+		threadJoin( threadName, arguments.timeout );
+		var elapsed = getTickCount() - startTime;
+
+		// Check if thread is still running (timeout occurred)
+		var threadScope = cfthread[ threadName ];
+		if ( threadScope.status != "COMPLETED" && threadScope.status != "TERMINATED" ) {
+			systemOutput( "waitForHttpComplete: TIMEOUT after #elapsed#ms - thread status=#threadScope.status#", true );
+			throw( type="DapTestCase.Timeout", message="HTTP thread '#threadName#' timed out after #elapsed#ms (status=#threadScope.status#)" );
+		}
+
+		systemOutput( "waitForHttpComplete: joined after #elapsed#ms", true );
 		variables.httpThread = "";
 	}
 	return variables.httpResult;

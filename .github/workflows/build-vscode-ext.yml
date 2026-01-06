@@ -1,0 +1,30 @@
+name: Build VSCode Extension
+
+on: [workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          cache: 'npm'
+          cache-dependency-path: vscode-client/package-lock.json
+
+      - name: Install vsce
+        run: npm i -g @vscode/vsce
+
+      - name: Build VSCode Extension
+        run: |
+          cd vscode-client
+          npm install
+          npm run build-dev-linux
+          vsce package
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-extension
+          path: vscode-client/*.vsix

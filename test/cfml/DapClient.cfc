@@ -251,7 +251,7 @@ component {
 				if ( variables.eventQueue[ i ].event == arguments.eventType ) {
 					var event = variables.eventQueue[ i ];
 					variables.eventQueue.deleteAt( i );
-					systemOutput( "waitForEvent: found #arguments.eventType# event=#serializeJSON( event )#", true );
+					systemOutput( "waitForEvent: found #arguments.eventType# after #getTickCount() - startTime#ms event=#serializeJSON( event )#", true );
 					return event;
 				}
 			}
