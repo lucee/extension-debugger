@@ -28,5 +28,6 @@ test-output.txt
 # Markdown (except docs)
 *.md
 !README.md
+!AGENTS.md
 !JAVA_AGENT.md
 !docs/*.md

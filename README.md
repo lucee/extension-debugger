@@ -182,18 +182,18 @@ If breakpoints aren't binding, use the command palette and run "luceedebug: show
 ### Build the Extension (.lex)
 
 ```bash
-./gradlew buildExtension
+mvn clean install -Dgoal=install
 ```
 
-Output: `build/luceedebug-extension.lex`
+Output: `target/debugger-extension-{version}.lex`
 
 ### Build the Agent Jar
 
 ```bash
-./gradlew shadowJar
+cd agent && mvn clean package
 ```
 
-Output: `luceedebug/build/libs/luceedebug.jar`
+Output: `agent/target/debugger-agent-{version}.jar`
 
 ### Build the VS Code Extension
 
@@ -202,12 +202,6 @@ cd vscode-client
 npm install
 npm run build-dev-windows  # Windows
 npm run build-dev-linux    # Mac/Linux
-```
-
-## Security Scanning
-
-```bash
-./gradlew dependencyCheckAnalyze
 ```
 
 ## How It Works (Technical Details)
@@ -239,6 +233,6 @@ This requires:
 - JVM startup flags to enable the agent and JDWP
 - Bytecode instrumentation at class load time
 
-**Note:** The bytecode instrumentation used with the agent can occasionally cause issues with complex CFCs, particularly those with many methods or deeply nested closures. 
+**Note:** The bytecode instrumentation used with the agent can occasionally cause issues with complex CFCs, particularly those with many methods or deeply nested closures.
 
 The Lucee extension/native approach avoids these issues since the debug hooks are part of Lucee's own bytecode generation.
