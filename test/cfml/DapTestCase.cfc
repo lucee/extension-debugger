@@ -147,7 +147,10 @@ component extends="org.lucee.cfml.test.LuceeTestCase" {
 	 */
 	public struct function waitForHttpComplete( numeric timeout = 30000 ) {
 		if ( len( variables.httpThread ) ) {
+			var startTime = getTickCount();
 			threadJoin( variables.httpThread, arguments.timeout );
+			var elapsed = getTickCount() - startTime;
+			systemOutput( "waitForHttpComplete: joined after #elapsed#ms (timeout=#arguments.timeout#ms)", true );
 			variables.httpThread = "";
 		}
 		return variables.httpResult;

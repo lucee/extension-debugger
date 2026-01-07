@@ -244,6 +244,8 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				var expectedLine = getStepOutLine( lines.outerFuncReturn, lines.outerFuncCallInner );
 				expect( frame.line ).toBe( expectedLine, "Step out should return to line #expectedLine#" );
 
+				// Clear breakpoint before cleanup - innerFunc is called twice in the test file
+				clearBreakpoints( variables.targetFile );
 				cleanupThread( threadId );
 			} );
 
@@ -274,6 +276,8 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				// Second frame should be outerFunc
 				expect( frames[ 2 ].name ).toInclude( "outerFunc" );
 
+				// Clear breakpoint before cleanup - innerFunc is called twice in the test file
+				clearBreakpoints( variables.targetFile );
 				cleanupThread( threadId );
 			} );
 

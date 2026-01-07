@@ -1,22 +1,32 @@
-# Ignore Gradle project-specific cache directory
-.gradle
-bin
+# Maven build output
+target/
+temp/
+build/
+.flattened-pom.xml
 
-# Ignore Gradle build output directory
-build
+# IDE
+.idea/
+.metals/
+.bloop/
+.vscode/settings.json
+bin/
 
-.idea
-.metals
-.bloop
+# Generated
 generated/
+
+# Test artifacts
 test/scratch
 /profiling/output
 /test-output
 /profiling/test-output
-.vscode/settings.json
+build-output.txt
+test-output.txt
+
+# Claude
 .claude/
+
+# Markdown (except docs)
 *.md
 !README.md
 !JAVA_AGENT.md
-build-output.txt
-test-output.txt
+!docs/*.md

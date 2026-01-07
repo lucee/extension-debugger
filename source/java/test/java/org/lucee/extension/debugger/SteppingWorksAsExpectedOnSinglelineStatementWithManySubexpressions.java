@@ -1,0 +1,255 @@
+package org.lucee.extension.debugger;
+
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.util.concurrent.TimeUnit;
+
+import com.github.dockerjava.api.DockerClient;
+import com.google.api.client.http.GenericUrl;
+import com.google.api.client.http.HttpRequest;
+import com.google.api.client.http.javanet.NetHttpTransport;
+
+import org.lucee.extension.debugger.testutils.DapUtils;
+import org.lucee.extension.debugger.testutils.DockerUtils;
+import org.lucee.extension.debugger.testutils.LuceeUtils;
+import org.lucee.extension.debugger.testutils.TestParams.LuceeAndDockerInfo;
+import org.lucee.extension.debugger.testutils.DockerUtils.HostPortBindings;
+
+import org.eclipse.lsp4j.debug.launch.DSPLauncher;
+
+class SteppingWorksAsExpectedOnSinglelineStatementWithManySubexpressions {
+	@ParameterizedTest
+	@MethodSource("org.lucee.extension.debugger.testutils.TestParams#getLuceeAndDockerInfo")
+	void a(LuceeAndDockerInfo dockerInfo) throws Throwable {
+		final DockerClient dockerClient = DockerUtils.getDefaultDockerClient();
+
+		final String imageID = DockerUtils
+			.buildOrGetImage(dockerClient, dockerInfo.dockerFile)
+			.getImageID();
+
+		final String containerID = DockerUtils
+			.getFreshDefaultContainer(
+				dockerClient,
+				imageID,
+				dockerInfo.projectRoot.toFile(),
+				dockerInfo.getTestWebRoot("stepping_works_as_expected_on_singleline_statement_with_many_subexpressions"),
+				new int[][]{
+					new int[]{8888,8888},
+					new int[]{10000,10000}
+				}
+			)
+			.getContainerID();
+
+		dockerClient
+			.startContainerCmd(containerID)
+			.exec();
+
+		HostPortBindings portBindings = DockerUtils.getPublishedHostPortBindings(dockerClient, containerID);
+
+		try {
+			LuceeUtils.pollForServerIsActive("http://localhost:" + portBindings.http + "/heartbeat.cfm");
+
+			final var dapClient = new DapUtils.MockClient();
+
+			final var FIXME_socket_needs_close = new Socket();
+			FIXME_socket_needs_close.connect(new InetSocketAddress("localhost", portBindings.dap));
+			final var launcher = DSPLauncher.createClientLauncher(dapClient, FIXME_socket_needs_close.getInputStream(), FIXME_socket_needs_close.getOutputStream());
+			launcher.startListening();
+			final var dapServer = launcher.getRemoteProxy();
+
+			DapUtils.init(dapServer).join();
+			DapUtils.attach(dapServer).join();
+
+			DapUtils
+				.setBreakpoints(dapServer, "/var/www/a.cfm", 6)
+				.join();
+
+			final var requestThreadToBeBlockedByBreakpoint = new java.lang.Thread(() -> {
+				final var requestFactory = new NetHttpTransport().createRequestFactory();
+				HttpRequest request;
+				try {
+					request = requestFactory.buildGetRequest(new GenericUrl("http://localhost:" + portBindings.http + "/a.cfm"));
+					request.execute().disconnect();
+				}
+				catch (IOException e) {
+					throw new RuntimeException(e);
+				}
+			});
+
+			final var threadID = DapUtils.doWithStoppedEventFuture(dapClient, () -> {
+				requestThreadToBeBlockedByBreakpoint.start();
+			})
+			.get(1000, TimeUnit.MILLISECONDS)
+			.getThreadId();
+
+			//
+			// ^N is "^" points at expected column (though we don't get column info) and "N" is frame number
+			// ^1 is at top of stack, ^2 is the frame below it, ...
+			//
+
+			{
+				// foo(n) { ... }
+				//
+				// foo(1).foo(2).foo(3).foo(4);
+				//     ^1
+				final var frames = DapUtils
+					.getStackTrace(dapServer, threadID)
+					.join()
+					.getStackFrames();
+				assertEquals(1, frames.length);
+				assertEquals("??", frames[0].getName());
+				assertEquals(6, frames[0].getLine());
+			}
+
+			DapUtils.doWithStoppedEventFuture(
+				dapClient,
+				() -> DapUtils.stepIn(dapServer, threadID).join()
+			).get(1000, TimeUnit.MILLISECONDS);
+
+			{
+				// foo(n) { ... }
+				//     ^1
+				// foo(1).foo(2).foo(3).foo(4);
+				//     ^2
+				final var frames = DapUtils
+					.getStackTrace(dapServer, threadID)
+					.join()
+					.getStackFrames();
+				assertEquals(2, frames.length);
+				assertEquals("FOO", frames[0].getName());
+				assertEquals(2, frames[0].getLine());
+			}
+
+			DapUtils.doWithStoppedEventFuture(
+				dapClient,
+				() -> DapUtils.stepOut(dapServer, threadID).join()
+			).get(1000, TimeUnit.MILLISECONDS);
+
+			{
+				// foo(n) { ... }
+				//
+				// foo(1).foo(2).foo(3).foo(4);
+				//     ^1 (out-but-not-yet-stepped)
+				final var frames = DapUtils
+					.getStackTrace(dapServer, threadID)
+					.join()
+					.getStackFrames();
+				assertEquals(1, frames.length);
+				assertEquals("??", frames[0].getName());
+				assertEquals(6, frames[0].getLine());
+			}
+
+			DapUtils.doWithStoppedEventFuture(
+				dapClient,
+				() -> DapUtils.stepIn(dapServer, threadID).join()
+			).get(1000, TimeUnit.MILLISECONDS);
+
+			{
+				// foo(n) { ... }
+				//     ^1
+				// foo(1).foo(2).foo(3).foo(4);
+				//            ^2
+				final var frames = DapUtils
+					.getStackTrace(dapServer, threadID)
+					.join()
+					.getStackFrames();
+				assertEquals(2, frames.length);
+				assertEquals("foo", frames[0].getName(), "'foo' instead of 'FOO', different case the second time around");
+				assertEquals(2, frames[0].getLine());
+			}
+
+			DapUtils.doWithStoppedEventFuture(
+				dapClient,
+				() -> DapUtils.stepOut(dapServer, threadID).join()
+			).get(1000, TimeUnit.MILLISECONDS);
+
+			{
+				// foo(n) { ... }
+				//
+				// foo(1).foo(2).foo(3).foo(4);
+				//            ^ (out-but-not-yet-stepped)
+				final var frames = DapUtils
+					.getStackTrace(dapServer, threadID)
+					.join()
+					.getStackFrames();
+				assertEquals(1, frames.length);
+				assertEquals("??", frames[0].getName());
+				assertEquals(6, frames[0].getLine());
+			}
+
+			DapUtils.doWithStoppedEventFuture(
+				dapClient,
+				() -> DapUtils.stepOver(dapServer, threadID).join()
+			).get(1000, TimeUnit.MILLISECONDS);
+
+			{
+				// foo(n) { ... }
+				//
+				// foo(1).foo(2).foo(3).foo(4);
+				//               ^1
+				final var frames = DapUtils
+					.getStackTrace(dapServer, threadID)
+					.join()
+					.getStackFrames();
+				assertEquals(1, frames.length);
+				assertEquals("??", frames[0].getName());
+				assertEquals(6, frames[0].getLine());
+			}
+
+			DapUtils.doWithStoppedEventFuture(
+				dapClient,
+				() -> DapUtils.stepOver(dapServer, threadID).join()
+			).get(1000, TimeUnit.MILLISECONDS);
+
+			{
+				// foo(n) { ... }
+				//
+				// foo(1).foo(2).foo(3).foo(4);
+				//                      ^1
+				final var frames = DapUtils
+					.getStackTrace(dapServer, threadID)
+					.join()
+					.getStackFrames();
+				assertEquals(1, frames.length);
+				assertEquals("??", frames[0].getName());
+				assertEquals(6, frames[0].getLine());
+			}
+
+			DapUtils.doWithStoppedEventFuture(
+				dapClient,
+				() -> DapUtils.stepOver(dapServer, threadID).join()
+			).get(1000, TimeUnit.MILLISECONDS);
+
+			{
+				// foo(n) { ... }
+				//
+				// foo(1).foo(2).foo(3).foo(4);
+				// <next line>
+				// ^1
+				final var frames = DapUtils
+					.getStackTrace(dapServer, threadID)
+					.join()
+					.getStackFrames();
+				assertEquals(1, frames.length);
+				assertEquals("??", frames[0].getName());
+				assertEquals(7, frames[0].getLine());
+			}
+
+			DapUtils
+				.disconnect(dapServer)
+				.join();
+
+			// DapUtils.getStackTrace(dapServer, threadID).join().getStackFrames()[0];
+		}
+		finally {
+			dockerClient.stopContainerCmd(containerID).exec();
+			dockerClient.removeContainerCmd(containerID).exec();
+		}
+	}
+}
