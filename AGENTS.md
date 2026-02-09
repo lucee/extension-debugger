@@ -75,6 +75,29 @@ grep -E "ERROR|Exception|Failed" test-output/run-<RUN_ID>.log
 
 Always use `test-output/` for workflow logs - it's gitignored so won't pollute the repo.
 
+## Releasing to Maven Central
+
+Versions are managed manually. Both artifacts must be updated before publishing:
+
+- Extension version: `pom.xml` → `<version>` (root pom, drives the .lex and source/java JAR)
+- Agent version: `agent/pom.xml` → `<revision>` property
+
+### Release steps
+
+1. Update versions in both pom files (remove `-SNAPSHOT` suffix)
+2. Commit the version change
+3. Go to Actions → "Build Extension" → Run workflow
+4. Tick the **"Deploy to Maven Central"** checkbox
+5. Run — the deploy job runs after all tests pass
+6. After successful publish, bump versions to next `-SNAPSHOT` and commit
+
+### Required GitHub secrets
+
+- `MAVEN_USERNAME` - Sonatype OSSRH / Central Portal username
+- `MAVEN_PASSWORD` - Sonatype OSSRH / Central Portal password/token
+- `GPG_PRIVATE_KEY` - ASCII-armoured GPG private key for signing
+- `GPG_PASSPHRASE` - Passphrase for the GPG key
+
 ## Code Style
 
 - Java 11+
