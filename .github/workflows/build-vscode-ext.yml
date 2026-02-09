@@ -1,6 +1,12 @@
 name: Build VSCode Extension
 
-on: [workflow_dispatch]
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to VS Code Marketplace'
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -28,3 +34,11 @@ jobs:
         with:
           name: vscode-extension
           path: vscode-client/*.vsix
+
+      - name: Publish to VS Code Marketplace
+        if: inputs.publish && github.ref == 'refs/heads/main'
+        run: |
+          cd vscode-client
+          vsce publish
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}

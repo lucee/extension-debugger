@@ -1,8 +1,8 @@
 {
   "name": "luceedebug",
-  "publisher": "DavidRogers",
-  "version": "2.0.12",
-  "description": "VS Code client for luceedebug backend.",
+  "publisher": "lucee",
+  "version": "3.0.0",
+  "description": "CFML step debugger for Lucee - set breakpoints, inspect variables, and step through code.",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build-dev-windows": "npx tsc && node \"node_modules/esbuild/bin/esbuild\" ./src/extension.ts --bundle --sourcemap --tsconfig=./tsconfig.json --external:vscode --format=cjs --platform=node --outfile=dist/extension.js",
@@ -25,7 +25,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/softwareCobbler/luceedebug"
+    "url": "https://github.com/lucee/extension-debugger"
   },
   "engines": {
     "vscode": "^1.63.0"
@@ -217,7 +217,7 @@
             "request": "attach",
             "name": "Attach to server",
             "hostName": "localhost",
-            "port": 9999,
+            "port": 10000,
             "secret": "",
             "pathTransforms": [
               {
@@ -237,7 +237,7 @@
               "request": "attach",
               "name": "Attach to server",
               "hostName": "localhost",
-              "port": 9999,
+              "port": 10000,
               "secret": "",
               "pathTransforms": [
                 {
