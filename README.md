@@ -1,4 +1,4 @@
-# luceedebug
+# Lucee extension-debug (7.1+) and agent (pre 7.1)
 
 A step debugger for Lucee CFML, based on the [luceedebug](https://github.com/softwareCobbler/luceedebug) project by David Rogers.
 
