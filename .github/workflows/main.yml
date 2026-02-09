@@ -572,7 +572,7 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
 
       - name: Deploy extension to Maven Central
-        run: mvn -B -e clean install -Dgoal=deploy --settings maven-settings.xml
+        run: mvn -B -e clean deploy -Dgoal=deploy --settings maven-settings.xml
         env:
           MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
