@@ -1,0 +1,19 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"type": "cfml",
+			"request": "attach",
+			"name": "Lucee Docker Debugger",
+			"hostName": "localhost",
+			"port": 10000,
+			"secret": "my-secret",
+			"pathTransforms": [
+				{
+					"idePrefix": "${workspaceFolder}/app",
+					"serverPrefix": "/var/www"
+				}
+			]
+		}
+	]
+}
