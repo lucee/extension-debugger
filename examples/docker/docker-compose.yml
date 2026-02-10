@@ -1,13 +1,15 @@
 services:
   lucee:
-    image: lucee/lucee:7.1.0.46-SNAPSHOT-nginx-tomcat11.0-jdk25-temurin-noble
+    build:
+      context: ../..
+      dockerfile: examples/docker/Dockerfile
     environment:
       LUCEE_DAP_SECRET: my-secret
       LUCEE_DAP_PORT: 10000
       LUCEE_DAP_HOST: 0.0.0.0
-      LUCEE_EXTENSIONS: org.lucee:debugger-extension:3.0.0.0-SNAPSHOT
       LUCEE_LOGGING_FORCE_APPENDER: console
       LUCEE_LOGGING_FORCE_LEVEL: info
+      LUCEE_EXTENSIONS: org.lucee:debugger-extension:3.0.0.1-SNAPSHOT
     ports:
       - "8888:8888"
       - "10000:10000"
