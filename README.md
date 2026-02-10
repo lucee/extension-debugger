@@ -49,6 +49,7 @@ The simplest and most efficient way to use luceedebug. No JVM configuration requ
 | `LUCEE_DAP_PORT` | | Port for DAP server (default: 10000) |
 | `LUCEE_DAP_HOST` | | Bind address for DAP server (default: localhost, use `0.0.0.0` for Docker) |
 | `LUCEE_DAP_BREAKPOINT` | | Set to `false` to disable breakpoint instrumentation |
+| `LUCEE_DEBUGGER_DEBUG` | | Set to `true` to enable verbose debug logging to the console |
 
 Setting `LUCEE_DAP_BREAKPOINT=false` disables breakpoint support but keeps the DAP server running. This is useful if you only want console output streaming without the instrumentation overhead.
 
