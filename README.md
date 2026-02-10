@@ -155,6 +155,10 @@ Multiple transforms can be specified - first match wins. Order them from most sp
 ]
 ```
 
+## Examples
+
+- [Docker](examples/docker/) - Lucee 7.1 running in Docker with the debugger extension, includes configs for VS Code, Neovim, and IntelliJ
+
 ## Features
 
 ### writeDump / serializeJSON

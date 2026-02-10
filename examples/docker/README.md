@@ -1,6 +1,6 @@
 # Docker Example
 
-Debug Lucee CFML running in Docker with luceedebug.
+Lucee 7.1 running in Docker with the debugger extension.
 
 ## Quick Start
 
@@ -21,7 +21,11 @@ Install the [LuceeDebug](https://marketplace.visualstudio.com/items?itemName=Dav
 - Switch to the debug console view
 - Open [http://localhost:8888](http://localhost:8888) in a browser
 
-The VS Code extension adds context menu commands (writeDump, serializeJSON, getMetadata) and hover evaluation for CFML variables. All core debugging features (breakpoints, stepping, variable inspection) are standard DAP.
+The VS Code extension adds context menu commands (`writeDump`, `serializeJSON`, `getMetadata`) and hover evaluation for CFML variables. 
+
+All core debugging features (breakpoints, stepping, variable inspection) are standard DAP.
+
+The extension testsuite uses direct socket connections to test the DAP support, so it's VS Code agnostic.
 
 ## Other DAP Clients
 
@@ -73,6 +77,10 @@ Install the [LSP4IJ](https://plugins.jetbrains.com/plugin/23257-lsp4ij) plugin, 
   ]
 }
 ```
+
+## Full Documentation
+
+See the [main README](../../README.md) for all configuration options, DAP capabilities, and build instructions.
 
 ## How It Works
 
