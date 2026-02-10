@@ -76,15 +76,21 @@ Install the [LSP4IJ](https://plugins.jetbrains.com/plugin/23257-lsp4ij) plugin, 
 
 ## How It Works
 
-The Lucee 7.1+ Docker image is used, with with the debugger extension being installed via an env var:
+The Lucee 7.1+ Docker image is used, with the debugger extension being installed via an env var:
 
 `LUCEE_EXTENSIONS: org.lucee:debugger-extension:3.0.0.1-SNAPSHOT`.
 
-Three env vars enable it:
+Three env vars enable the debugger:
 
-- `LUCEE_DAP_SECRET` - authentication secret (must match your launch.json)
+- `LUCEE_DAP_SECRET` - authentication secret (must match your client config)
 - `LUCEE_DAP_PORT` - DAP server port
 - `LUCEE_DAP_HOST` - bind address (`0.0.0.0` for Docker, defaults to `localhost`)
-- `LUCEE_DEBUGGER_DEBUG` - set to `true` for verbose debug logging to the console
+
+Two Lucee env vars redirect Lucee's logs to the Docker console (visible via `docker compose logs`), see [Lucee troubleshooting docs](https://docs.lucee.org/recipes/troubleshooting.html#starting-tomcat-manually-and-redirecting-logs-to-console):
+
+- `LUCEE_LOGGING_FORCE_APPENDER: console` - redirects all Lucee log output from files to the console
+- `LUCEE_LOGGING_FORCE_LEVEL: info` - sets the log verbosity level (`info`, `debug`, `trace`)
+
+For troubleshooting connection issues, set `LUCEE_DEBUGGER_DEBUG=true` in docker-compose.yml. This enables verbose luceedebug logging to the Docker console (`docker compose logs -f`), showing the full DAP handshake including secret validation.
 
 The `pathTransforms` in [.vscode/launch.json](.vscode/launch.json) maps your local `app/` folder to `/var/www` inside the container.
