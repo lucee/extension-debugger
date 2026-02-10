@@ -10,7 +10,7 @@ services:
       LUCEE_LOGGING_FORCE_APPENDER: console
       LUCEE_LOGGING_FORCE_LEVEL: info
       LUCEE_DEBUGGER_DEBUG: false
-      LUCEE_EXTENSIONS: org.lucee:debugger-extension:3.0.0.1-SNAPSHOT
+      LUCEE_EXTENSIONS: org.lucee:debugger-extension:3.0.0.2-SNAPSHOT
     ports:
       - "8888:8888"
       - "10000:10000"

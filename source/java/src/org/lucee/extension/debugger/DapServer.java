@@ -724,7 +724,7 @@ public class DapServer implements IDebugProtocolServer {
 			.setVariable(args.getVariablesReference(), args.getName(), args.getValue(), 0)
 			.collapse(
 				errMsg -> {
-					Log.info("setVariable() - error: " + errMsg);
+					Log.debug("setVariable() - error: " + errMsg);
 					var exceptionalResult = new CompletableFuture<SetVariableResponse>();
 					var error = new ResponseError(ResponseErrorCode.InternalError, errMsg, null);
 					exceptionalResult.completeExceptionally(new ResponseErrorException(error));
@@ -972,7 +972,7 @@ public class DapServer implements IDebugProtocolServer {
 		if (!secretValidated) return notAuthorized();
 
 		long threadId = args.getThreadId();
-		Log.info("pause() called for thread " + threadId);
+		Log.debug("pause() called for thread " + threadId);
 		// Thread ID 0 means "pause all threads" - this happens when user clicks
 		// pause button without a specific thread selected
 		luceeVm_.pause(threadId);
@@ -1332,7 +1332,7 @@ public class DapServer implements IDebugProtocolServer {
         }
 
         if (args.getFrameId() == null) {
-            if (!isHover) { Log.info("evaluate(\"" + expr + "\") - error: missing frameID"); }
+            if (!isHover) { Log.debug("evaluate(\"" + expr + "\") - error: missing frameID"); }
             final var exceptionalResult = new CompletableFuture<EvaluateResponse>();
             final var error = new ResponseError(ResponseErrorCode.InvalidRequest, "missing frameID", null);
             exceptionalResult.completeExceptionally(new ResponseErrorException(error));
@@ -1343,7 +1343,7 @@ public class DapServer implements IDebugProtocolServer {
                 .evaluate(args.getFrameId(), expr)
                 .collapse(
                     errMsg -> {
-                        if (!isHover) { Log.info("evaluate(\"" + expr + "\") - error: " + errMsg); }
+                        if (!isHover) { Log.debug("evaluate(\"" + expr + "\") - error: " + errMsg); }
                         final var exceptionalResult = new CompletableFuture<EvaluateResponse>();
                         final var error = new ResponseError(ResponseErrorCode.InternalError, errMsg, null);
                         exceptionalResult.completeExceptionally(new ResponseErrorException(error));
@@ -1356,14 +1356,14 @@ public class DapServer implements IDebugProtocolServer {
                                 final var response = new EvaluateResponse();
                                 if (value == null) {
                                     // some problem, or we tried to get a function from a cfc maybe? this needs work.
-                                    Log.info("evaluate(\"" + expr + "\") = ???");
+                                    Log.debug("evaluate(\"" + expr + "\") = ???");
                                     response.setVariablesReference(0);
                                     response.setIndexedVariables(0);
                                     response.setNamedVariables(0);
                                     response.setResult("???");
                                 }
                                 else {
-                                    Log.info("evaluate(\"" + expr + "\") = " + value.getValue());
+                                    Log.debug("evaluate(\"" + expr + "\") = " + value.getValue());
                                     response.setVariablesReference((int)(long)value.getVariablesReference());
                                     response.setIndexedVariables(value.getIndexedVariables());
                                     response.setNamedVariables(value.getNamedVariables());
@@ -1373,7 +1373,7 @@ public class DapServer implements IDebugProtocolServer {
                                 return CompletableFuture.completedFuture(response);
                             },
                             string -> {
-                                Log.info("evaluate(\"" + expr + "\") = " + string);
+                                Log.debug("evaluate(\"" + expr + "\") = " + string);
                                 final var response = new EvaluateResponse();
                                 response.setResult(string);
                                 return CompletableFuture.completedFuture(response);

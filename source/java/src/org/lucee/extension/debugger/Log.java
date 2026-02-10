@@ -149,14 +149,15 @@ public class Log {
 
 	/**
 	 * Log a debug message.
-	 * Only printed if LUCEE_DEBUGGER_DEBUG env var is set.
-	 * Uses STDOUT category in DAP for normal (non-highlighted) display.
+	 * Shown in the DAP debug console when logLevel is "debug" or higher.
+	 * Also shown on the server console when LUCEE_DEBUGGER_DEBUG env var is set.
 	 */
 	public static void debug(String message) {
-		if (!internalDebug) {
+		boolean dapEnabled = LogLevel.DEBUG.isEnabled(logLevel);
+		if (!internalDebug && !dapEnabled) {
 			return;
 		}
-		if (!consoleOutput) {
+		if (internalDebug && !consoleOutput) {
 			String consoleMsg;
 			if (colorLogs) {
 				consoleMsg = ANSI_DIM + PREFIX + "DEBUG: " + message + ANSI_RESET;
@@ -165,19 +166,22 @@ public class Log {
 			}
 			System.out.println(consoleMsg);
 		}
-		sendToDap("DEBUG: " + message, OutputEventArgumentsCategory.STDOUT);
+		if (dapEnabled) {
+			sendToDap("DEBUG: " + message, OutputEventArgumentsCategory.STDOUT);
+		}
 	}
 
 	/**
 	 * Log a trace message.
-	 * Only printed if LUCEE_DEBUGGER_DEBUG env var is set.
-	 * Uses STDOUT category in DAP for normal (non-highlighted) display.
+	 * Shown in the DAP debug console when logLevel is "trace".
+	 * Also shown on the server console when LUCEE_DEBUGGER_DEBUG env var is set.
 	 */
 	public static void trace(String message) {
-		if (!internalDebug) {
+		boolean dapEnabled = LogLevel.TRACE.isEnabled(logLevel);
+		if (!internalDebug && !dapEnabled) {
 			return;
 		}
-		if (!consoleOutput) {
+		if (internalDebug && !consoleOutput) {
 			String consoleMsg;
 			if (colorLogs) {
 				consoleMsg = ANSI_DIM + PREFIX + "TRACE: " + message + ANSI_RESET;
@@ -186,7 +190,9 @@ public class Log {
 			}
 			System.out.println(consoleMsg);
 		}
-		sendToDap("TRACE: " + message, OutputEventArgumentsCategory.STDOUT);
+		if (dapEnabled) {
+			sendToDap("TRACE: " + message, OutputEventArgumentsCategory.STDOUT);
+		}
 	}
 
 	/**

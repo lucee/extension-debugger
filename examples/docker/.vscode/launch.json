@@ -8,6 +8,7 @@
 			"hostName": "localhost",
 			"port": 10000,
 			"secret": "my-secret",
+			"logLevel": "info",
 			"pathTransforms": [
 				{
 					"idePrefix": "${workspaceFolder}/app",

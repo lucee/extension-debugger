@@ -506,7 +506,7 @@ public class NativeDebuggerListener {
 	 * @return true if the thread was found and resumed, false otherwise
 	 */
 	public static boolean resumeNativeThread(long javaThreadId) {
-		Log.info("resumeNativeThread: thread=" + javaThreadId + ", map=" + nativelySuspendedThreads.keySet());
+		Log.debug("resumeNativeThread: thread=" + javaThreadId + ", map=" + nativelySuspendedThreads.keySet());
 		WeakReference<PageContext> pcRef = nativelySuspendedThreads.remove(javaThreadId);
 		if (pcRef == null) {
 			Log.warn("resumeNativeThread: thread " + javaThreadId + " not in map!");
@@ -517,12 +517,12 @@ public class NativeDebuggerListener {
 			Log.warn("resumeNativeThread: PageContext for thread " + javaThreadId + " was GC'd!");
 			return false;
 		}
-		Log.info("resumeNativeThread: calling debuggerResume() for thread " + javaThreadId);
+		Log.debug("resumeNativeThread: calling debuggerResume() for thread " + javaThreadId);
 		try {
 			// Call debuggerResume() via reflection (Lucee7+ method)
 			java.lang.reflect.Method resumeMethod = pc.getClass().getMethod("debuggerResume");
 			resumeMethod.invoke(pc);
-			Log.info("resumeNativeThread: debuggerResume() completed for thread " + javaThreadId);
+			Log.debug("resumeNativeThread: debuggerResume() completed for thread " + javaThreadId);
 			return true;
 		} catch (NoSuchMethodException e) {
 			Log.error("debuggerResume() not available (pre-Lucee7?)");
@@ -565,7 +565,7 @@ public class NativeDebuggerListener {
 			threadsToPause.put(threadId, Boolean.TRUE);
 		}
 		updateHasSuspendConditions();
-		Log.info("Pause requested for thread: " + (threadId == 0 || threadId == ALL_THREADS_VIRTUAL_ID ? "all" : threadId));
+		Log.debug("Pause requested for thread: " + (threadId == 0 || threadId == ALL_THREADS_VIRTUAL_ID ? "all" : threadId));
 	}
 
 	/**
@@ -648,7 +648,7 @@ public class NativeDebuggerListener {
 	 */
 	public static void onSuspend(PageContext pc, String file, int line, String label) {
 		long threadId = Thread.currentThread().getId();
-		Log.info("onSuspend: thread=" + threadId + " file=" + Config.shortenPath(file) + " line=" + line);
+		Log.debug("onSuspend: thread=" + threadId + " file=" + Config.shortenPath(file) + " line=" + line);
 
 		// Check if we were stepping BEFORE clearing state
 		StepState stepState = steppingThreads.remove(threadId);
@@ -666,7 +666,7 @@ public class NativeDebuggerListener {
 		// Track the suspended thread so we can resume it later
 		// We store PageContext (not PageContextImpl) to avoid class loading cycles
 		nativelySuspendedThreads.put(threadId, new WeakReference<>(pc));
-		Log.info("onSuspend: added thread " + threadId + " to map, map=" + nativelySuspendedThreads.keySet());
+		Log.debug("onSuspend: added thread " + threadId + " to map, map=" + nativelySuspendedThreads.keySet());
 
 		// Store suspend location for stack trace (needed when no native DebuggerFrames exist)
 		// Include the exception if we're suspending due to one
@@ -1183,7 +1183,7 @@ public class NativeDebuggerListener {
 						continue;
 					}
 				}
-				Log.info( "Function breakpoint hit: " + functionName +
+				Log.debug( "Function breakpoint hit: " + functionName +
 					( componentName != null ? " in " + componentName : "" ) );
 				return true;
 			}
@@ -1243,7 +1243,7 @@ public class NativeDebuggerListener {
 					maxLen = Integer.MAX_VALUE; // can't bound max for wildcards
 				}
 
-				Log.info( "Function breakpoint: " + name +
+				Log.debug( "Function breakpoint: " + name +
 					( compName != null ? " (component: " + compName + ")" : "" ) +
 					( isWild ? " (wildcard)" : "" ) +
 					( condition != null ? " condition: " + condition : "" ) );

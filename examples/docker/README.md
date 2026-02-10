@@ -21,7 +21,7 @@ Install the [LuceeDebug](https://marketplace.visualstudio.com/items?itemName=Dav
 - Switch to the debug console view
 - Open [http://localhost:8888](http://localhost:8888) in a browser
 
-The VS Code extension adds context menu commands (`writeDump`, `serializeJSON`, `getMetadata`) and hover evaluation for CFML variables. 
+The VS Code extension adds context menu commands (`writeDump`, `serializeJSON`, `getMetadata`) and hover evaluation for CFML variables.
 
 All core debugging features (breakpoints, stepping, variable inspection) are standard DAP.
 
@@ -50,7 +50,7 @@ dap.configurations.cfml = {
     secret = "my-secret",
     pathTransforms = {
       {
-        idePrefix = "${workspaceFolder}/app",
+        idePrefix = "/path/to/app",
         serverPrefix = "/var/www",
       },
     },
@@ -58,7 +58,7 @@ dap.configurations.cfml = {
 }
 ```
 
-### IntelliJ (LSP4IJ plugin)
+### JetBrains (LSP4IJ plugin)
 
 Install the [LSP4IJ](https://plugins.jetbrains.com/plugin/23257-lsp4ij) plugin, then create a DAP Run/Debug configuration:
 
@@ -71,7 +71,7 @@ Install the [LSP4IJ](https://plugins.jetbrains.com/plugin/23257-lsp4ij) plugin, 
   "secret": "my-secret",
   "pathTransforms": [
     {
-      "idePrefix": "${workspaceFolder}/app",
+      "idePrefix": "/path/to/app",
       "serverPrefix": "/var/www"
     }
   ]
@@ -86,7 +86,7 @@ See the [main README](../../README.md) for all configuration options, DAP capabi
 
 The Lucee 7.1+ Docker image is used, with the debugger extension being installed via an env var:
 
-`LUCEE_EXTENSIONS: org.lucee:debugger-extension:3.0.0.1-SNAPSHOT`.
+`LUCEE_EXTENSIONS: org.lucee:debugger-extension:3.0.0.2-SNAPSHOT`.
 
 Three env vars enable the debugger:
 

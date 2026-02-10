@@ -787,7 +787,7 @@ public class NativeLuceeVm implements ILuceeVm {
 		// Sort by label and limit
 		results.sort((a, b) -> a.getLabel().compareToIgnoreCase(b.getLabel()));
 
-		Log.info("Completions for '" + partialExpr + "': returning " + results.size() + " items");
+		Log.debug("Completions for '" + partialExpr + "': returning " + results.size() + " items");
 		for (var item : results) {
 			Log.debug("  - " + item.getLabel());
 		}
