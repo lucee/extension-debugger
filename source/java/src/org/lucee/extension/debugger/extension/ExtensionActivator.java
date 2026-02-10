@@ -69,15 +69,16 @@ public class ExtensionActivator {
 			// Start DAP server in background thread (createForSocket blocks forever)
 			// Listener registration is deferred until DAP client connects with secret
 			final int port = debugPort;
+			final String host = EnvUtil.getDebuggerHost();
 			final org.lucee.extension.debugger.Config finalConfig = config;
 		Thread dapThread = new Thread(() -> {
 			// Use System.out directly to ensure we see output even if Log class has issues
 			System.out.println("[luceedebug] DAP server thread started");
 			System.out.flush();
 			try {
-				System.out.println("[luceedebug] Calling DapServer.createForSocket on port " + port);
+				System.out.println("[luceedebug] Calling DapServer.createForSocket on " + host + ":" + port);
 				System.out.flush();
-				DapServer.createForSocket(luceeVm, finalConfig, "localhost", port);
+				DapServer.createForSocket(luceeVm, finalConfig, host, port);
 				// This line should never be reached - createForSocket loops forever
 				System.out.println("[luceedebug] DAP server createForSocket returned unexpectedly");
 			} catch (Throwable t) {
@@ -94,7 +95,7 @@ public class ExtensionActivator {
 		});
 		dapThread.start();
 
-		Log.info("Native mode, DAP server starting on localhost:" + debugPort);
+		Log.info("Native mode, DAP server starting on " + host + ":" + debugPort);
 		} catch (Throwable t) {
 			System.out.println("[luceedebug] Extension activation failed: " + t.getClass().getName() + ": " + t.getMessage());
 			t.printStackTrace(System.out);

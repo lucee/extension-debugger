@@ -30,7 +30,7 @@ The simplest and most efficient way to use luceedebug. No JVM configuration requ
 
 **Setup:**
 
-1. Install the extension via Lucee Admin, or deploy the `.lex` file to your extensions folder
+1. Install the extension via Lucee Admin, using `LUCEE_EXTENSIONS=org.lucee:debugger-extension:3.0.0.0-SNAPSHOT`, or deploy the `.lex` file to your extensions folder
 2. Set environment variables:
 
    ```bash
@@ -47,6 +47,7 @@ The simplest and most efficient way to use luceedebug. No JVM configuration requ
 |----------|:--------:|-------------|
 | `LUCEE_DAP_SECRET` | ✓ | Authentication secret (must match client config) |
 | `LUCEE_DAP_PORT` | | Port for DAP server (default: 10000) |
+| `LUCEE_DAP_HOST` | | Bind address for DAP server (default: localhost, use `0.0.0.0` for Docker) |
 | `LUCEE_DAP_BREAKPOINT` | | Set to `false` to disable breakpoint instrumentation |
 
 Setting `LUCEE_DAP_BREAKPOINT=false` disables breakpoint support but keeps the DAP server running. This is useful if you only want console output streaming without the instrumentation overhead.
@@ -63,7 +64,7 @@ Luceedebug implements the [Debug Adapter Protocol (DAP)](https://microsoft.githu
 
 ### VS Code
 
-The VS Code luceedebug extension is available on the VS Code Marketplace. Search for `luceedebug` in the extensions pane.
+The VS Code [luceedebug](https://marketplace.visualstudio.com/items?itemName=DavidRogers.luceedebug) extension is available on the VS Code Marketplace. Search for `luceedebug` in the extensions pane.
 
 Add a debug configuration to your `.vscode/launch.json`:
 

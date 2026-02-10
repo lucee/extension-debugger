@@ -63,6 +63,21 @@ public final class EnvUtil {
 	}
 
 	/**
+	 * Get DAP bind host from environment/system property.
+	 * Checks "lucee.dap.host" / "LUCEE_DAP_HOST".
+	 * Defaults to "localhost" if not set.
+	 *
+	 * @return the host to bind the DAP server to
+	 */
+	public static String getDebuggerHost() {
+		String host = getSystemPropOrEnvVar("lucee.dap.host");
+		if (host != null && !host.trim().isEmpty()) {
+			return host.trim();
+		}
+		return "localhost";
+	}
+
+	/**
 	 * Get DAP port from environment/system property.
 	 * Checks "lucee.dap.port" / "LUCEE_DAP_PORT".
 	 * Defaults to 9999 if secret is set but port is not.

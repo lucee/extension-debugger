@@ -295,33 +295,21 @@ public class DapServer implements IDebugProtocolServer {
      * Uses reflection to avoid OSGi classloader identity issues.
      */
     public static void shutdown() {
-        // Log who's calling shutdown with a stack trace
-        System.out.println("[luceedebug] DapServer.shutdown() called");
-        System.out.println("[luceedebug] shutdown() caller stack trace:");
-        for (StackTraceElement ste : java.lang.Thread.currentThread().getStackTrace()) {
-            System.out.println("[luceedebug]   " + ste);
-        }
-        System.out.flush();
-
         // Try to get socket from JVM-wide properties (survives classloader changes)
         Object storedSocket = System.getProperties().get(SOCKET_PROPERTY);
         if (storedSocket != null) {
             // Use reflection - instanceof may fail across OSGi classloaders
-            System.out.println("[luceedebug] shutdown() - found socket in system properties, closing via reflection...");
+            System.out.println("[luceedebug] shutdown() - closing existing DAP server socket");
             Log.debug("shutdown() - found socket in system properties, closing via reflection...");
             try {
                 java.lang.reflect.Method closeMethod = storedSocket.getClass().getMethod("close");
                 closeMethod.invoke(storedSocket);
-                System.out.println("[luceedebug] shutdown() - socket closed");
                 Log.debug("shutdown() - socket closed");
             } catch (Exception e) {
                 System.out.println("[luceedebug] shutdown() - socket close error: " + e);
                 Log.error("shutdown() - socket close error", e);
             }
             System.getProperties().remove(SOCKET_PROPERTY);
-        } else {
-            System.out.println("[luceedebug] shutdown() - no socket in system properties");
-            Log.debug("shutdown() - no socket in system properties");
         }
 
         // Also close our local static reference if set (same classloader case)
