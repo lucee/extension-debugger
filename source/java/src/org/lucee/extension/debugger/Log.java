@@ -16,8 +16,8 @@ import lucee.loader.engine.CFMLEngineFactory;
  * - Writes errors to Lucee's exception.log when available
  */
 public class Log {
-	private static final String PREFIX = "[luceedebug] ";
-	private static final String APP_NAME = "luceedebug";
+	private static final String PREFIX = "[debugger] ";
+	private static final String APP_NAME = "debugger";
 
 	// ANSI escape codes (for console/tomcat output)
 	private static final String ANSI_RESET = "\u001b[0m";
@@ -32,8 +32,8 @@ public class Log {
 	// Runtime settings from launch.json
 	private static volatile boolean colorLogs = true;
 	private static volatile LogLevel logLevel = LogLevel.INFO;
-	private static volatile boolean logExceptions = false;
-	private static volatile boolean consoleOutput = false;
+	private static volatile boolean logExceptions = true;
+	private static volatile boolean consoleOutput = true;
 
 	// Internal debugging - only enabled via env var LUCEE_DEBUGGER_DEBUG
 	private static final boolean internalDebug;
@@ -229,6 +229,7 @@ public class Log {
 
 		// Get full CFML stack trace
 		String stackTrace = ExceptionUtil.getCfmlStackTraceOrFallback(t);
+		debug("Stack trace extraction result: " + (stackTrace == null ? "null" : stackTrace.isEmpty() ? "empty" : stackTrace.length() + " chars"));
 		if (stackTrace != null && !stackTrace.isEmpty()) {
 			for (String line : stackTrace.split("\n")) {
 				if (!line.isEmpty()) {
@@ -237,6 +238,11 @@ public class Log {
 			}
 		} else {
 			sb.append("\n  at unknown");
+			// Also dump Java stack trace for debugging
+			debug("Java stack trace for " + t.getClass().getName() + ":");
+			for (StackTraceElement ste : t.getStackTrace()) {
+				debug("  " + ste.toString());
+			}
 		}
 		sendToDap(sb.toString(), OutputEventArgumentsCategory.STDERR);
 	}

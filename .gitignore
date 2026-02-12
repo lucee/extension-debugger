@@ -28,6 +28,8 @@ test-output.txt
 # Markdown (except docs)
 *.md
 !README.md
+!CHANGELOG.md
 !AGENTS.md
 !JAVA_AGENT.md
 !docs/*.md
+examples/docker/.vscode/settings.json

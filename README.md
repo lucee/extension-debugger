@@ -30,7 +30,7 @@ The simplest and most efficient way to use luceedebug. No JVM configuration requ
 
 **Setup:**
 
-1. Install the extension via Lucee Admin, using `LUCEE_EXTENSIONS=org.lucee:debugger-extension:3.0.0.2-SNAPSHOT`, or deploy the `.lex` file to your extensions folder
+1. Install the extension via Lucee Admin, using `LUCEE_EXTENSIONS=org.lucee:debugger-extension:3.0.0.3-SNAPSHOT`, or deploy the `.lex` file to your extensions folder
 2. Set environment variables:
 
    ```bash
@@ -98,9 +98,9 @@ These options control how the debug adapter behaves. They apply regardless of wh
 | `port` | DAP server port (must match `LUCEE_DAP_PORT`) |
 | `secret` | Authentication secret (must match `LUCEE_DAP_SECRET`, required for extension mode) |
 | `logLevel` | Log verbosity: `error`, `info`, `debug`, `trace` (default: info) |
-| `consoleOutput` | Stream console output to debug console (extension mode only, default: false) |
+| `consoleOutput` | Stream console output to debug console (extension mode only, default: true) |
 | `evaluation` | Enable expression evaluation in console/watch/hover (default: true) |
-| `logExceptions` | Log exceptions to the debug console (default: false) |
+| `logExceptions` | Log exception stacktraces to the debug console (default: true) |
 
 ### DAP Capabilities
 

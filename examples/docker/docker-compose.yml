@@ -7,10 +7,10 @@ services:
       LUCEE_DAP_SECRET: my-secret
       LUCEE_DAP_PORT: 10000
       LUCEE_DAP_HOST: 0.0.0.0
-      LUCEE_LOGGING_FORCE_APPENDER: console
+      LUCEE_LOGGING_FORCE_APPENDER_: console
       LUCEE_LOGGING_FORCE_LEVEL: info
       LUCEE_DEBUGGER_DEBUG: false
-      LUCEE_EXTENSIONS: org.lucee:debugger-extension:3.0.0.2-SNAPSHOT
+      LUCEE_EXTENSIONS: org.lucee:debugger-extension:3.0.0.3-SNAPSHOT
     ports:
       - "8888:8888"
       - "10000:10000"

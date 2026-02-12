@@ -583,13 +583,13 @@ public class DapServer implements IDebugProtocolServer {
             }
         }
 
-        // logExceptions - default false
-        Log.setLogExceptions(toBooleanValue(args.get("logExceptions"), false));
+        // logExceptions - default true (exception details are lost after continuing)
+        Log.setLogExceptions(toBooleanValue(args.get("logExceptions"), true));
 
-        // consoleOutput - default false (streams System.out/err to debug console)
+        // consoleOutput - default true (streams System.out/err to debug console)
         // Only available in native mode
         if (luceeVm_ instanceof NativeLuceeVm) {
-            NativeDebuggerListener.setConsoleOutput(toBooleanValue(args.get("consoleOutput"), false));
+            NativeDebuggerListener.setConsoleOutput(toBooleanValue(args.get("consoleOutput"), true));
         }
     }
 

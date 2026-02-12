@@ -185,4 +185,111 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		expect( result ).toHaveKey( "status" );
 	}
 
+	// ========== Exception Logging ==========
+
+	function testExceptionLoggingWithLogExceptionsEnabled() skip="notSupportsExceptionBreakpoints" {
+		// Reconnect with exception logging enabled
+		teardownDap();
+		setupDap( logLevel = "info", logExceptions = true );
+
+		dap.setExceptionBreakpoints( [ "uncaught" ] );
+
+		// Trigger uncaught exception
+		triggerArtifact( "exception-target.cfm", { throwException: true, catchException = false }, true );
+
+		var stopped = dap.waitForEvent( "stopped", 2000 );
+
+		// Drain output events
+		var events = dap.drainEvents();
+		var foundExceptionLog = false;
+
+		systemOutput( "Checking #events.len()# events for exception logging", true );
+
+		for ( var event in events ) {
+			if ( event.event == "output" ) {
+				systemOutput( "Output event: category=#event.body.category# output=#event.body.output#", true );
+				// Should see exception details in output
+				if ( event.body.output contains "TestException" && event.body.output contains "Intentional test exception" ) {
+					foundExceptionLog = true;
+					expect( event.body.category ).toBe( "stderr", "Exception logging should use stderr category" );
+				}
+			}
+		}
+
+		expect( foundExceptionLog ).toBeTrue( "Exception should be logged to debug console when logExceptions=true" );
+
+		cleanupThread( stopped.body.threadId );
+
+		// Restore original setup for subsequent tests
+		teardownDap();
+		setupDap();
+		variables.targetFile = getArtifactPath( "exception-target.cfm" );
+	}
+
+	function testExceptionLoggingDisabled() skip="notSupportsExceptionBreakpoints" {
+		// Reconnect with exception logging explicitly disabled
+		teardownDap();
+		setupDap( logExceptions = false );
+
+		dap.setExceptionBreakpoints( [ "uncaught" ] );
+
+		// Trigger uncaught exception
+		triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false }, true );
+
+		var stopped = dap.waitForEvent( "stopped", 2000 );
+
+		// Drain output events
+		var events = dap.drainEvents();
+		var foundExceptionLog = false;
+
+		for ( var event in events ) {
+			if ( event.event == "output" && event.body.output contains "TestException" ) {
+				foundExceptionLog = true;
+			}
+		}
+
+		// Exception details should NOT be logged when logExceptions is false
+		expect( foundExceptionLog ).toBeFalse( "Exception should NOT be logged to debug console when logExceptions=false" );
+
+		cleanupThread( stopped.body.threadId );
+	}
+
+	function testOnExceptionCalledLogsAtDebugLevel() skip="notSupportsExceptionBreakpoints" {
+		// Reconnect with debug log level to see onException calls
+		teardownDap();
+		setupDap( logLevel = "debug" );
+
+		dap.setExceptionBreakpoints( [ "uncaught" ] );
+
+		// Trigger uncaught exception
+		triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false }, true );
+
+		var stopped = dap.waitForEvent( "stopped", 2000 );
+
+		// Drain output events
+		var events = dap.drainEvents();
+		var foundOnExceptionLog = false;
+
+		systemOutput( "Checking events for onException logging at debug level", true );
+
+		for ( var event in events ) {
+			if ( event.event == "output" ) {
+				systemOutput( "Output event: #event.body.output#", true );
+				// Should see onException being called at DEBUG level
+				if ( event.body.output contains "onException" ) {
+					foundOnExceptionLog = true;
+				}
+			}
+		}
+
+		expect( foundOnExceptionLog ).toBeTrue( "onException calls should be logged at DEBUG level" );
+
+		cleanupThread( stopped.body.threadId );
+
+		// Restore original setup
+		teardownDap();
+		setupDap();
+		variables.targetFile = getArtifactPath( "exception-target.cfm" );
+	}
+
 }

@@ -86,7 +86,7 @@ See the [main README](../../README.md) for all configuration options, DAP capabi
 
 The Lucee 7.1+ Docker image is used, with the debugger extension being installed via an env var:
 
-`LUCEE_EXTENSIONS: org.lucee:debugger-extension:3.0.0.2-SNAPSHOT`.
+`LUCEE_EXTENSIONS: org.lucee:debugger-extension:3.0.0.3-SNAPSHOT`.
 
 Three env vars enable the debugger:
 

@@ -13,7 +13,7 @@ public final class EnvUtil {
 	 * System property takes precedence. Env var name is derived from property name
 	 * by uppercasing and replacing dots with underscores.
 	 *
-	 * @param propertyName e.g. "lucee.debugger.enabled"
+	 * @param propertyName e.g. "lucee.dap.secret"
 	 * @return the value, or null if not set
 	 */
 	public static String getSystemPropOrEnvVar(String propertyName) {

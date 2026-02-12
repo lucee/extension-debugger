@@ -63,7 +63,7 @@ component {
 		return response;
 	}
 
-	public struct function attach( required string secret, struct pathTransforms = {}, boolean consoleOutput = false ) {
+	public struct function attach( required string secret, struct pathTransforms = {}, boolean consoleOutput = false, string logLevel = "", boolean logExceptions = false ) {
 		var args = {
 			"secret": arguments.secret
 		};
@@ -72,6 +72,12 @@ component {
 		}
 		if ( arguments.consoleOutput ) {
 			args[ "consoleOutput" ] = true;
+		}
+		if ( len( arguments.logLevel ) ) {
+			args[ "logLevel" ] = arguments.logLevel;
+		}
+		if ( arguments.logExceptions ) {
+			args[ "logExceptions" ] = true;
 		}
 		var response = sendRequest( "attach", args );
 		// Wait for initialized event from server

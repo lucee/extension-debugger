@@ -168,7 +168,7 @@ public class NativeDebuggerListener {
 	 * Flag to forward System.out/err to DAP client.
 	 * Set via launch.json consoleOutput option.
 	 */
-	private static volatile boolean consoleOutput = false;
+	private static volatile boolean consoleOutput = true;
 
 	/**
 	 * Fast-path flag: true when there's anything that could cause a suspend.
