@@ -161,11 +161,21 @@ jobs:
           path: agent/target/debugger-agent-*.jar
           retention-days: 1
 
-  # Test against Lucee 7.1 (native debugger branch)
-  test-lucee-71:
-    name: Test DAP - Lucee 7.1 (native)
+  # Test extension mode against Lucee 7.1+ (native debugger)
+  test-extension:
+    name: Test DAP - Lucee ${{ matrix.lucee }} (native)
     runs-on: ubuntu-latest
     needs: [build-extension]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lucee: "7.1"
+            lucee_query: "7.1/all/jar"
+            runner_query: "7.1/all/light"
+          - lucee: "7.2"
+            lucee_query: "7.2/all/jar"
+            runner_query: "7.2/all/light"
 
     steps:
       - name: Checkout luceedebug
@@ -215,9 +225,9 @@ jobs:
           curl -L -o express-template.zip "$EXPRESS_URL"
           unzip -q express-template.zip -d debuggee
 
-      - name: Download Lucee 7.1 JAR
+      - name: Download Lucee ${{ matrix.lucee }} JAR
         run: |
-          LUCEE_FILENAME=$(curl -s "https://update.lucee.org/rest/update/provider/latest/7/all/jar/filename")
+          LUCEE_FILENAME=$(curl -s "https://update.lucee.org/rest/update/provider/latest/${{ matrix.lucee_query }}/filename")
           LUCEE_FILENAME=$(echo "$LUCEE_FILENAME" | tr -d '"')
           if [ -z "$LUCEE_FILENAME" ] || [[ "$LUCEE_FILENAME" == *"error"* ]]; then
             echo "ERROR: Could not get Lucee filename from update API"
@@ -333,7 +343,7 @@ jobs:
         with:
           webroot: ${{ github.workspace }}/lucee/test
           execute: /bootstrap-tests.cfm
-          luceeVersionQuery: 7/all/light
+          luceeVersionQuery: ${{ matrix.runner_query }}
         env:
           testLabels: dap
           testAdditional: ${{ github.workspace }}/test/cfml
@@ -360,7 +370,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: debuggee-logs-71
+          name: debuggee-logs-${{ matrix.lucee }}
           path: |
             debuggee/logs/
             debuggee/lucee-server/context/logs/
@@ -561,7 +571,7 @@ jobs:
   deploy:
     name: Deploy to Maven Central
     runs-on: ubuntu-latest
-    needs: [test-lucee-71, test-agent]
+    needs: [test-extension, test-agent]
     if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/main'
 
     steps:
