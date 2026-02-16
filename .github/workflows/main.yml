@@ -173,9 +173,10 @@ jobs:
           - lucee: "7.1"
             lucee_query: "7.1/all/jar"
             runner_query: "7.1/all/light"
-          - lucee: "7.2"
-            lucee_query: "7.2/all/jar"
-            runner_query: "7.2/all/light"
+          # Disabled: 7.2 not yet available. Re-enable when published.
+          # - lucee: "7.2"
+          #   lucee_query: "7.2/all/jar"
+          #   runner_query: "7.2/all/light"
 
     steps:
       - name: Checkout luceedebug
