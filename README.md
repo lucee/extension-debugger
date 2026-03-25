@@ -5,6 +5,8 @@
 
 A step debugger for Lucee CFML (extension for 7.1+, agent for older versions), based on the [luceedebug](https://github.com/softwareCobbler/luceedebug) project by David Rogers.
 
+**[Documentation on docs.lucee.org](https://docs.lucee.org/recipes/step-debugger.html)**
+
 ![misc. features of a debug session indicating that luceedebug is a step debugger for Lucee.](assets/whatisit.png)
 
 ## How It Works
