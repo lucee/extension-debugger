@@ -1,6 +1,6 @@
 # Java Agent Setup
 
-This document covers running luceedebug as a Java agent. This is the legacy approach - for Lucee 6.2+, consider using the [native extension](README.md) instead.
+This document covers running the debugger as a Java agent. This is the legacy approach - for Lucee 6.2+, consider using the [native extension](README.md) instead.
 
 ## Requirements
 
@@ -9,17 +9,11 @@ This document covers running luceedebug as a Java agent. This is the legacy appr
 
 ## Download
 
-Built jars are available via GitHub releases:
+Built jars are available on [Maven Central](https://central.sonatype.com/artifact/org.lucee/debugger-agent) — click the version, browse, and download `debugger-agent-{version}.jar`. For example:
 
-https://github.com/lucee/extension-debugger/releases/latest
-
-Or build from source:
-
-```bash
-./gradlew shadowJar
+```text
+https://repo1.maven.org/maven2/org/lucee/debugger-agent/3.0.0.4/debugger-agent-3.0.0.4.jar
 ```
-
-Output: `luceedebug/build/libs/luceedebug.jar`
 
 ## JVM Configuration
 
@@ -28,12 +22,12 @@ Add the following to your Java invocation. Tomcat users can use `setenv.sh` or `
 ```bash
 -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=localhost:9999
 
--javaagent:/abspath/to/luceedebug.jar=jdwpHost=localhost,jdwpPort=9999,debugHost=0.0.0.0,debugPort=10000,jarPath=/abspath/to/luceedebug.jar
+-javaagent:/abspath/to/debugger-agent.jar=jdwpHost=localhost,jdwpPort=9999,debugHost=0.0.0.0,debugPort=10000,jarPath=/abspath/to/debugger-agent.jar
 ```
 
 ### agentlib (JDWP)
 
-Configures JDWP, the lower-level Java debugging protocol that the luceedebug agent connects with.
+Configures JDWP, the lower-level Java debugging protocol that the debugger agent connects with.
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
@@ -42,15 +36,15 @@ Configures JDWP, the lower-level Java debugging protocol that the luceedebug age
 | `suspend` | `n` | Use verbatim |
 | `address` | `localhost:9999` | Change only if port 9999 is in use |
 
-**Note:** The VS Code debugger connects to luceedebug, not JDWP directly, so these settings rarely need customising.
+**Note:** The VS Code debugger connects to the debugger agent, not JDWP directly, so these settings rarely need customising.
 
-### javaagent (luceedebug)
+### javaagent (debugger agent)
 
-Configures the luceedebug agent itself.
+Configures the debugger agent itself.
 
 | Parameter | Description |
 |-----------|-------------|
-| `/abspath/to/luceedebug.jar` | Absolute path to the agent jar. Must match your environment. |
+| `/abspath/to/debugger-agent.jar` | Absolute path to the agent jar. Must match your environment. |
 | `jdwpHost` | Host where JDWP is listening. Must match `agentlib`'s `address`. |
 | `jdwpPort` | Port where JDWP is listening. Must match `agentlib`'s `address`. |
 | `debugHost` | Interface for the debugger to listen on. See [Network Configuration](#network-configuration). |
@@ -66,7 +60,7 @@ Configures the luceedebug agent itself.
 For local debugging without containers:
 
 ```bash
--javaagent:/path/to/luceedebug.jar=jdwpHost=localhost,jdwpPort=9999,debugHost=localhost,debugPort=10000,jarPath=/path/to/luceedebug.jar
+-javaagent:/path/to/debugger-agent.jar=jdwpHost=localhost,jdwpPort=9999,debugHost=localhost,debugPort=10000,jarPath=/path/to/debugger-agent.jar
 ```
 
 ### Docker / Containers
@@ -74,7 +68,7 @@ For local debugging without containers:
 When Lucee runs in a container, `debugHost` **must** be `0.0.0.0` (listen on all interfaces):
 
 ```bash
--javaagent:/path/to/luceedebug.jar=jdwpHost=localhost,jdwpPort=9999,debugHost=0.0.0.0,debugPort=10000,jarPath=/path/to/luceedebug.jar
+-javaagent:/path/to/debugger-agent.jar=jdwpHost=localhost,jdwpPort=9999,debugHost=0.0.0.0,debugPort=10000,jarPath=/path/to/debugger-agent.jar
 ```
 
 **Security Warning:** Don't use `0.0.0.0` on publicly accessible servers without proper firewall rules - it exposes the debugger to the network.
@@ -106,14 +100,14 @@ For agent mode, you don't need the `secret` field - that's only for native exten
 ```bash
 #!/bin/bash
 CATALINA_OPTS="$CATALINA_OPTS -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=localhost:9999"
-CATALINA_OPTS="$CATALINA_OPTS -javaagent:/opt/luceedebug/luceedebug.jar=jdwpHost=localhost,jdwpPort=9999,debugHost=0.0.0.0,debugPort=10000,jarPath=/opt/luceedebug/luceedebug.jar"
+CATALINA_OPTS="$CATALINA_OPTS -javaagent:/opt/lucee/debugger/debugger-agent.jar=jdwpHost=localhost,jdwpPort=9999,debugHost=0.0.0.0,debugPort=10000,jarPath=/opt/lucee/debugger/debugger-agent.jar"
 ```
 
 ### Windows (setenv.bat)
 
 ```batch
 set CATALINA_OPTS=%CATALINA_OPTS% -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=localhost:9999
-set CATALINA_OPTS=%CATALINA_OPTS% -javaagent:C:\luceedebug\luceedebug.jar=jdwpHost=localhost,jdwpPort=9999,debugHost=0.0.0.0,debugPort=10000,jarPath=C:\luceedebug\luceedebug.jar
+set CATALINA_OPTS=%CATALINA_OPTS% -javaagent:C:\lucee\debugger\debugger-agent.jar=jdwpHost=localhost,jdwpPort=9999,debugHost=0.0.0.0,debugPort=10000,jarPath=C:\lucee\debugger\debugger-agent.jar
 ```
 
 ## Troubleshooting

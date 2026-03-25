@@ -1,14 +1,17 @@
-# Lucee extension-debug (7.1+) and agent (pre 7.1)
+# Lucee Extension Debugger
 
-A step debugger for Lucee CFML, based on the [luceedebug](https://github.com/softwareCobbler/luceedebug) project by David Rogers.
+[![Maven Central - Extension](https://img.shields.io/maven-central/v/org.lucee/debugger-extension?label=extension)](https://central.sonatype.com/artifact/org.lucee/debugger-extension)
+[![Maven Central - Agent](https://img.shields.io/maven-central/v/org.lucee/debugger-agent?label=agent)](https://central.sonatype.com/artifact/org.lucee/debugger-agent)
+
+A step debugger for Lucee CFML (extension for 7.1+, agent for older versions), based on the [luceedebug](https://github.com/softwareCobbler/luceedebug) project by David Rogers.
 
 ![misc. features of a debug session indicating that luceedebug is a step debugger for Lucee.](assets/whatisit.png)
 
 ## How It Works
 
-Luceedebug lets you set breakpoints in CFML code and step through execution. It works by inserting debug hooks into Lucee's compiled bytecode - when execution hits a breakpoint, the debugger pauses and lets you inspect variables, evaluate expressions, and step through code.
+The Extension Debugger lets you set breakpoints in CFML code and step through execution. It works by inserting debug hooks into Lucee's compiled bytecode - when execution hits a breakpoint, the debugger pauses and lets you inspect variables, evaluate expressions, and step through code.
 
-There are two ways to run luceedebug, depending on your Lucee version:
+There are two ways to run it, depending on your Lucee version:
 
 | | Lucee Extension | Java Agent |
 |---|---|---|
@@ -21,7 +24,7 @@ See [How It Works (Technical Details)](#how-it-works-technical-details) for more
 
 ### Lucee Extension (Recommended, Lucee 7.1+)
 
-The simplest and most efficient way to use luceedebug. No JVM configuration required, and significantly lower overhead than the agent approach:
+The simplest and most efficient way to use the debugger. No JVM configuration required, and significantly lower overhead than the agent approach:
 
 - **Minimal overhead** when debugger not attached (hooks are JIT-compiled away)
 - **No runtime instrumentation** - debug hooks are part of Lucee's bytecode generation, not re-instrumented at runtime
@@ -30,7 +33,7 @@ The simplest and most efficient way to use luceedebug. No JVM configuration requ
 
 **Setup:**
 
-1. Install the extension via Lucee Admin, using `LUCEE_EXTENSIONS=org.lucee:debugger-extension:3.0.0.4`, or deploy the `.lex` file to your extensions folder
+1. Install the extension via Lucee Admin, using `LUCEE_EXTENSIONS=org.lucee:debugger-extension:3.0.0.4`, or deploy the [`.lex` file](https://central.sonatype.com/artifact/org.lucee/debugger-extension) to your extensions folder
 2. Set environment variables:
 
    ```bash
@@ -55,13 +58,13 @@ Setting `LUCEE_DAP_BREAKPOINT=false` disables breakpoint support but keeps the D
 
 ### Java Agent (Legacy)
 
-For older Lucee versions or environments where the Lucee extension isn't suitable, you can run luceedebug as a Java agent. This requires JVM startup configuration.
+For older Lucee versions or environments where the Lucee extension isn't suitable, you can run the debugger as a Java agent. This requires JVM startup configuration.
 
 See [JAVA_AGENT.md](JAVA_AGENT.md) for detailed setup instructions.
 
 ## IDE Integration
 
-Luceedebug implements the [Debug Adapter Protocol (DAP)](https://microsoft.github.io/debug-adapter-protocol/), so it can work with any IDE that supports DAP. Currently we provide a VS Code extension, but the DAP server can be used with other editors.
+The Extension Debugger implements the [Debug Adapter Protocol (DAP)](https://microsoft.github.io/debug-adapter-protocol/), so it can work with any IDE that supports DAP. Currently we provide a VS Code extension, but the DAP server can be used with other editors.
 
 ### VS Code
 
@@ -227,11 +230,11 @@ This is efficient because:
 
 ### Java Agent Mode
 
-For older Lucee versions, luceedebug runs as a Java agent that instruments bytecode at runtime:
+For older Lucee versions, the debugger runs as a Java agent that instruments bytecode at runtime:
 
 1. The agent connects to JDWP (Java Debug Wire Protocol) on the JVM
 2. When Lucee loads a class, the agent intercepts and rewrites the bytecode to insert debug hooks
-3. These hooks call back to the luceedebug agent when hit
+3. These hooks call back to the debugger agent when hit
 
 This requires:
 

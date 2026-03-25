@@ -29,7 +29,7 @@ The extension testsuite uses direct socket connections to test the DAP support, 
 
 ## Other DAP Clients
 
-Luceedebug uses the [Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/), so any DAP client that can connect via TCP socket should work. The key requirement is that the `attach` request must include `secret` in its arguments.
+The Extension Debugger uses the [Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/), so any DAP client that can connect via TCP socket should work. The key requirement is that the `attach` request must include `secret` in its arguments.
 
 ### Neovim (nvim-dap)
 
@@ -99,6 +99,6 @@ Two Lucee env vars redirect Lucee's logs to the Docker console (visible via `doc
 - `LUCEE_LOGGING_FORCE_APPENDER: console` - redirects all Lucee log output from files to the console
 - `LUCEE_LOGGING_FORCE_LEVEL: info` - sets the log verbosity level (`info`, `debug`, `trace`)
 
-For troubleshooting connection issues, set `LUCEE_DEBUGGER_DEBUG=true` in docker-compose.yml. This enables verbose luceedebug logging to the Docker console (`docker compose logs -f`), showing the full DAP handshake including secret validation.
+For troubleshooting connection issues, set `LUCEE_DEBUGGER_DEBUG=true` in docker-compose.yml. This enables verbose debugger logging to the Docker console (`docker compose logs -f`), showing the full DAP handshake including secret validation.
 
 The `pathTransforms` in [.vscode/launch.json](.vscode/launch.json) maps your local `app/` folder to `/var/www` inside the container.
