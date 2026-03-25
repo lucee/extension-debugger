@@ -31,12 +31,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
       - name: Cache Maven packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2
           key: maven-cache
@@ -58,20 +58,20 @@ jobs:
 
     steps:
       - name: Checkout Lucee (native debugger branch)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: zspitzer/Lucee
           ref: LDEV-1402-native-debugger
           path: lucee
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
 
       - name: Cache Maven packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2
           key: lucee-maven-${{ hashFiles('lucee/**/pom.xml') }}
@@ -91,7 +91,7 @@ jobs:
           echo "Built JAR: $JAR_FILE"
 
       - name: Upload Lucee 7.1 JAR
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lucee-71-jar
           path: lucee/loader/target/lucee-*.jar
@@ -104,16 +104,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
 
       - name: Cache Maven packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2
           key: maven-${{ hashFiles('**/pom.xml') }}
@@ -123,7 +123,7 @@ jobs:
         run: mvn -B -e clean install -Dgoal=install
 
       - name: Upload extension
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: extension-lex
           path: target/*.lex
@@ -136,16 +136,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up JDK 11
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '11'
           distribution: 'temurin'
 
       - name: Cache Maven packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2
           key: maven-${{ hashFiles('**/pom.xml') }}
@@ -155,7 +155,7 @@ jobs:
         run: cd agent && mvn -B -e clean package
 
       - name: Upload agent JAR
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-jar
           path: agent/target/debugger-agent-*.jar
@@ -180,16 +180,16 @@ jobs:
 
     steps:
       - name: Checkout luceedebug
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Checkout Lucee (for test framework)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: lucee/lucee
           path: lucee
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -197,7 +197,7 @@ jobs:
       # Disabled: re-enable to use custom-built Lucee from build-lucee-71 job
       - name: Download Lucee 7.1 JAR (from build)
         if: false
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: lucee-71-jar
           path: lucee-jar
@@ -213,7 +213,7 @@ jobs:
           echo "Using Lucee JAR: $JAR_FILE"
 
       - name: Download extension
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: extension-lex
           path: extension
@@ -325,14 +325,14 @@ jobs:
           fi
 
       - name: Cache Maven packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2
           key: maven-cache
           
 
       - name: Cache Lucee downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /home/runner/work/_actions/lucee/script-runner/main/lucee-download-cache
           key: lucee-downloads
@@ -369,7 +369,7 @@ jobs:
 
       - name: Upload debuggee logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: debuggee-logs-${{ matrix.lucee }}
           path: |
@@ -402,22 +402,22 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Checkout Lucee (for test framework)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: lucee/lucee
           path: lucee
 
       - name: Set up JDK ${{ matrix.java }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '${{ matrix.java }}'
           distribution: 'temurin'
 
       - name: Download agent JAR
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: agent-jar
           path: agent-jar
@@ -519,13 +519,13 @@ jobs:
           fi
 
       - name: Cache Maven packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2
           key: maven-cache
 
       - name: Cache Lucee downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /home/runner/work/_actions/lucee/script-runner/main/lucee-download-cache
           key: lucee-downloads
@@ -560,7 +560,7 @@ jobs:
 
       - name: Upload debuggee logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: debuggee-logs-${{ matrix.lucee }}
           path: |
@@ -577,16 +577,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
 
       - name: Cache Maven packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2
           key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}

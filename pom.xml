@@ -4,7 +4,7 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>org.lucee</groupId>
 	<artifactId>debugger-extension</artifactId>
-	<version>3.0.0.3-SNAPSHOT</version>
+	<version>3.0.0.4</version>
 	<packaging>pom</packaging>
 	<name>Debugger Extension</name>
 
@@ -63,8 +63,20 @@
 		</developer>
 	</developers>
 
-	<description>Debug Adapter Protocol (DAP) debugger for Lucee CFML. Set breakpoints, inspect variables, and step through code in VS Code.</description>
+	<description>Debug Adapter Protocol (DAP) debugger extension for Lucee CFML. Set breakpoints, inspect variables, and step through code in VS Code and other DAP-compatible IDEs.</description>
 	<url>https://github.com/lucee/extension-debugger</url>
+
+	<organization>
+		<name>Lucee Association Switzerland</name>
+		<url>https://lucee.org</url>
+	</organization>
+
+	<issueManagement>
+		<system>JIRA</system>
+		<url>https://luceeserver.atlassian.net/browse/LDEV</url>
+	</issueManagement>
+
+	<inceptionYear>2021</inceptionYear>
 
 	<profiles>
 		<profile>

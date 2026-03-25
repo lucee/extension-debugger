@@ -195,7 +195,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		dap.setExceptionBreakpoints( [ "uncaught" ] );
 
 		// Trigger uncaught exception
-		triggerArtifact( "exception-target.cfm", { throwException: true, catchException = false }, true );
+		triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false }, true );
 
 		var stopped = dap.waitForEvent( "stopped", 2000 );
 

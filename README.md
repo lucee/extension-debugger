@@ -30,7 +30,7 @@ The simplest and most efficient way to use luceedebug. No JVM configuration requ
 
 **Setup:**
 
-1. Install the extension via Lucee Admin, using `LUCEE_EXTENSIONS=org.lucee:debugger-extension:3.0.0.3-SNAPSHOT`, or deploy the `.lex` file to your extensions folder
+1. Install the extension via Lucee Admin, using `LUCEE_EXTENSIONS=org.lucee:debugger-extension:3.0.0.4`, or deploy the `.lex` file to your extensions folder
 2. Set environment variables:
 
    ```bash

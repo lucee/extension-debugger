@@ -1,5 +1,7 @@
 # Changelog
 
+## [3.0.0.4] - First Release 2026-03-26
+
 ## [3.0.0.3-SNAPSHOT] - 2026-02-11
 
 ### Fixed
