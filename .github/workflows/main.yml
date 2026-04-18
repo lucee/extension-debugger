@@ -26,6 +26,20 @@ env:
   DEBUGGEE_HTTP_PORT: 8888
 
 jobs:
+  # Single source of truth for the Lucee branch under test.
+  # Set lucee_branch to a zspitzer/Lucee branch name (e.g.
+  # "LDEV-6274-debugger-cfinclude-udf") to build Lucee 7.1 from source and
+  # install that JAR into the native-mode debuggee. Leave empty to fall back
+  # to the published cdn release.
+  config:
+    name: Config
+    runs-on: ubuntu-latest
+    outputs:
+      lucee_branch: ${{ steps.set.outputs.lucee_branch }}
+    steps:
+      - id: set
+        run: echo "lucee_branch=LDEV-6274-debugger-cfinclude-udf" >> "$GITHUB_OUTPUT"
+
   # Prime Maven cache by running script-runner once
   # This ensures the cache is populated for subsequent jobs
   prime-maven-cache:
@@ -51,19 +65,21 @@ jobs:
           execute: /prime-cache.cfm
           luceeVersionQuery: 7.0/all/light
 
-  # Build Lucee 7.1 from the native debugger branch
-  # Disabled: using published 7.1 alpha instead. Re-enable to test against a branch.
+  # Build Lucee 7.1 from the branch defined in the config job.
+  # Skipped entirely when config.outputs.lucee_branch is empty — test-extension
+  # then falls back to the published cdn release.
   build-lucee-71:
-    if: false
-    name: Build Lucee 7.1 (native debugger)
+    needs: [config]
+    if: needs.config.outputs.lucee_branch != ''
+    name: Build Lucee 7.1 (${{ needs.config.outputs.lucee_branch }})
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Lucee (native debugger branch)
+      - name: Checkout Lucee (${{ needs.config.outputs.lucee_branch }})
         uses: actions/checkout@v6
         with:
           repository: zspitzer/Lucee
-          ref: LDEV-1402-native-debugger
+          ref: ${{ needs.config.outputs.lucee_branch }}
           path: lucee
 
       - name: Set up JDK 21
@@ -168,7 +184,10 @@ jobs:
     name: Test DAP - Lucee ${{ matrix.lucee }} (native)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: [build-extension]
+    # Allow build-lucee-71 to be skipped (when no custom Lucee branch is set)
+    # without also skipping this job. Still block on build-extension failures.
+    if: ${{ !failure() && !cancelled() }}
+    needs: [config, build-extension, build-lucee-71]
     strategy:
       fail-fast: false
       matrix:
@@ -197,17 +216,15 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      # Disabled: re-enable to use custom-built Lucee from build-lucee-71 job
       - name: Download Lucee 7.1 JAR (from build)
-        if: false
+        if: needs.config.outputs.lucee_branch != ''
         uses: actions/download-artifact@v8
         with:
           name: lucee-71-jar
           path: lucee-jar
 
-      # Disabled: re-enable with the above step for custom-built Lucee
       - name: Find Lucee JAR (from build)
-        if: false
+        if: needs.config.outputs.lucee_branch != ''
         id: find-jar
         run: |
           JAR_FILE=$(ls lucee-jar/lucee-*.jar | head -1)
@@ -229,7 +246,11 @@ jobs:
           curl -L -o express-template.zip "$EXPRESS_URL"
           unzip -q express-template.zip -d debuggee
 
+      # Runs only when no custom Lucee branch is set (config.outputs.lucee_branch
+      # is empty). When a branch is set, "Install custom-built Lucee JAR" below
+      # does the install from the build-lucee-71 artifact instead.
       - name: Download Lucee ${{ matrix.lucee }} JAR
+        if: needs.config.outputs.lucee_branch == ''
         run: |
           LUCEE_FILENAME=$(curl -s "https://update.lucee.org/rest/update/provider/latest/${{ matrix.lucee_query }}/filename")
           LUCEE_FILENAME=$(echo "$LUCEE_FILENAME" | tr -d '"')
@@ -246,6 +267,13 @@ jobs:
           fi
           rm -f debuggee/lib/lucee-*.jar
           cp lucee.jar debuggee/lib/
+
+      - name: Install custom-built Lucee JAR into Express
+        if: needs.config.outputs.lucee_branch != ''
+        run: |
+          rm -f debuggee/lib/lucee-*.jar
+          cp "${{ steps.find-jar.outputs.jar_path }}" debuggee/lib/
+          echo "Installed ${{ steps.find-jar.outputs.jar_name }} into debuggee/lib/"
 
       - name: Install extension into Express
         run: |
