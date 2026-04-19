@@ -167,6 +167,7 @@ jobs:
   test-extension:
     name: Test DAP - Lucee ${{ matrix.lucee }} (native)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [build-extension]
     strategy:
       fail-fast: false
@@ -268,6 +269,7 @@ jobs:
           chmod +x debuggee/bin/setenv.sh
 
       - name: Warmup debuggee (Lucee Express)
+        timeout-minutes: 5
         run: |
           cd debuggee
           # Configure Tomcat to use port 8888
@@ -342,6 +344,7 @@ jobs:
       # Run tests using script-runner (separate Lucee instance)
       # NOTE: Don't install luceedebug extension in test runner - only debuggee needs it
       - name: Run DAP Tests
+        timeout-minutes: 5
         uses: lucee/script-runner@main
         with:
           webroot: ${{ github.workspace }}/lucee/test
@@ -386,6 +389,7 @@ jobs:
   test-agent:
     name: Test DAP - Lucee ${{ matrix.lucee }} (agent)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [build-agent]
     strategy:
       fail-fast: false
@@ -471,6 +475,7 @@ jobs:
           chmod +x debuggee/bin/setenv.sh
 
       - name: Warmup debuggee (Lucee Express)
+        timeout-minutes: 5
         run: |
           cd debuggee
           sed -i 's/port="8080"/port="8888"/g' conf/server.xml
@@ -533,6 +538,7 @@ jobs:
           key: lucee-downloads
 
       - name: Run DAP Tests
+        timeout-minutes: 5
         uses: lucee/script-runner@main
         with:
           webroot: ${{ github.workspace }}/lucee/test
