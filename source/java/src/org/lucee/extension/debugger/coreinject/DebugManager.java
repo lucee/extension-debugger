@@ -69,7 +69,7 @@ public class DebugManager implements IDebugManager {
         VirtualMachine vm = jdwpSelfConnect(jdwpHost, jdwpPort);
         LuceeVm luceeVm = new LuceeVm(config, vm);
 
-        new Thread(() -> {
+        var dapThread = new Thread(() -> {
             System.out.println("[luceedebug] jdwp self connect OK");
             try {
                 DapServer.createForSocket(luceeVm, config, debugHost, debugPort);
@@ -77,7 +77,12 @@ public class DebugManager implements IDebugManager {
                 System.out.println("[luceedebug] DAP server thread failed: " + t.getMessage());
                 t.printStackTrace();
             }
-        }, threadName).start();
+        }, threadName);
+        // Daemon so LUCEE_ENABLE_WARMUP can exit the JVM cleanly after Lucee's bundle
+        // compile - a non-daemon thread parked on ServerSocket.accept() would block exit.
+        // During a real debug session Tomcat's own non-daemon threads keep the JVM alive.
+        dapThread.setDaemon(true);
+        dapThread.start();
     }
 
     static private AttachingConnector getConnector() {

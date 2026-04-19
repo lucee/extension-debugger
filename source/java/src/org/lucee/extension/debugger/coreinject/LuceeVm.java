@@ -211,7 +211,10 @@ public class LuceeVm implements ILuceeVm {
         }
 
         static void spawnThreadForJdwpToSuspend() {
-            new Thread(JdwpWorker::jdwp_stays_suspended_in_this_method_as_a_worker, "luceedebug-worker").start();
+            var workerThread = new Thread(JdwpWorker::jdwp_stays_suspended_in_this_method_as_a_worker, "luceedebug-worker");
+            // Daemon so this thread doesn't block JVM exit during LUCEE_ENABLE_WARMUP.
+            workerThread.setDaemon(true);
+            workerThread.start();
         }
 
         static ConcurrentHashMap<Long, Thread> threadBuffer_ = new ConcurrentHashMap<>();
@@ -496,7 +499,7 @@ public class LuceeVm implements ILuceeVm {
     }
 
     private void initEventPump() {
-        new java.lang.Thread(() -> {
+        var pumpThread = new java.lang.Thread(() -> {
             try {
                 while (true) {
                     var eventSet = vm_.eventQueue().remove();
@@ -528,7 +531,10 @@ public class LuceeVm implements ILuceeVm {
                 System.err.println("[luceedebug] event pump crashed - debugger event delivery has stopped");
                 e.printStackTrace();
             }
-        }).start();
+        });
+        // Daemon so vm_.eventQueue().remove() (blocks forever) can't prevent JVM exit.
+        pumpThread.setDaemon(true);
+        pumpThread.start();
     }
 
     private void initCurrentThreadListing() {
