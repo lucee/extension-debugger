@@ -127,12 +127,9 @@ public class DebugManager implements IDebugManager {
         return "<!DOCTYPE html><html><body>" + s + "</body></html>";
     }
 
-    // we only need to know the thread, so we can get the pagecontext, so we can get Config and ServletConfig,
-    // which are required to generate a fresh page context, which we want so we have a fresh state and especially an empty output buffer.
-    // Are Config and ServletConfig globally available? Pulling those values from some global context would be much less kludgy.
-    // We need to know which thread is suspended, but caller doesn't have that info, just a variableID.
-    // Caller does have "all the suspended threads", but not all of them may have an associated page context.
-    // So we can iterate until we find one with an associated page context
+    // We need a PageContext to create a fresh ephemeral one with its own output buffer.
+    // The caller only has a variablesReference, so we iterate suspendedThreads and pick
+    // the first one that has an associated PageContext.
     synchronized public String doDump(ArrayList<Thread> suspendedThreads, int variableID) {
         final var pageContext = maybeNull_findPageContext(suspendedThreads);
         if (pageContext == null) {
@@ -196,26 +193,55 @@ public class DebugManager implements IDebugManager {
             this.outStream = outStream;
         }
 
-        // is there a way to conjure up a new PageContext without having some other page context?
+        // Create a fresh PageContext piggy-backing off another one's ConfigWeb.
+        //
+        // Uses ThreadUtil.createPageContext via the loader's ClassUtil. This avoids
+        // calling pc.getServletConfig() entirely - that method's return type flipped
+        // from javax to jakarta between Lucee 6 and 7, and since this agent jar is
+        // compiled against jakarta, a direct call throws NoSuchMethodError on 6.x.
+        // ConfigWeb is servlet-API-agnostic so one agent jar works on both runtimes.
         public static PageContextAndOutputStream ephemeralPageContextFromOther(PageContext pc) throws Exception {
             final var outputStream = new ByteArrayOutputStream();
-            PageContext freshEphemeralPageContext = lucee.runtime.util.PageContextUtil.getPageContext(
-                /*Config config*/ pc.getConfig(),
-                /*ServletConfig servletConfig*/ pc.getServletConfig(),
-                /*File contextRoot*/ new File("."),
-                /*String host*/ "",
-                /*String scriptName*/ "",
-                /*String queryString*/ "",
-                /*Cookie[] cookies*/ null,
-                /*Map<String, Object> headers*/ new HashMap<>(),
-                /*Map<String, String> parameters*/ new HashMap<>(),
-                /*Map<String, Object> attributes*/ new HashMap<>(),
-                /*OutputStream os*/ outputStream,
-                /*boolean register*/ false,
-                /*long timeout*/ 99999, // seconds?
-                /*boolean ignoreScopes*/ true
+
+            lucee.loader.engine.CFMLEngine engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
+            lucee.runtime.util.ClassUtil classUtil = engine.getClassUtil();
+
+            Class<?> threadUtilClass = classUtil.loadClass("lucee.runtime.thread.ThreadUtil");
+            Object emptyCookies = getEmptyCookieArray(classUtil);
+
+            PageContext freshEphemeralPageContext = (PageContext) classUtil.callStaticMethod(
+                threadUtilClass,
+                "createPageContext",
+                new Object[] {
+                    pc.getConfig(),    // ConfigWeb
+                    outputStream,      // OutputStream
+                    "",                // serverName
+                    "",                // requestURI
+                    "",                // queryString
+                    emptyCookies,      // Cookie[] (jakarta or javax per runtime)
+                    null,              // Pair[] headers
+                    null,              // byte[] body
+                    null,              // Pair[] parameters
+                    null,              // Struct attributes
+                    false,             // register (caller handles ThreadLocalPageContext.register)
+                    99999L             // timeout
+                }
             );
+
             return new PageContextAndOutputStream(freshEphemeralPageContext, outputStream);
+        }
+
+        private static Object getEmptyCookieArray(lucee.runtime.util.ClassUtil classUtil) throws Exception {
+            try {
+                // jakarta first (Lucee 7+)
+                Class<?> cookieClass = classUtil.loadClass("jakarta.servlet.http.Cookie");
+                return java.lang.reflect.Array.newInstance(cookieClass, 0);
+            }
+            catch (Exception e) {
+                // javax fallback (Lucee 5/6)
+                Class<?> cookieClass = classUtil.loadClass("javax.servlet.http.Cookie");
+                return java.lang.reflect.Array.newInstance(cookieClass, 0);
+            }
         }
     }
 
