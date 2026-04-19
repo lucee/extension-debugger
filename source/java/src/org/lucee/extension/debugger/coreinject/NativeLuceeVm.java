@@ -418,15 +418,14 @@ public class NativeLuceeVm implements ILuceeVm {
 				registerMethod.invoke(null, pc);
 
 				try {
-					// Use the loader-provided BIF resolver so BIF classes resolve across
-					// OSGi bundle imports (lucee.core doesn't self-import functions.system).
+					// loadBIF with the short function name resolves via Lucee's FunctionLib
+					// instead of the OSGi classloader, so we don't need the bundle to
+					// self-import lucee.runtime.functions.system.
 					lucee.loader.engine.CFMLEngine engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
-					lucee.runtime.ext.function.BIF getMetaDataBif =
-						engine.getClassUtil().loadBIF(pc, "lucee.runtime.functions.system.GetMetaData");
+					lucee.runtime.ext.function.BIF getMetaDataBif = engine.getClassUtil().loadBIF(pc, "getMetaData");
 					Object metadata = getMetaDataBif.invoke(pc, new Object[] { obj });
 
-					lucee.runtime.ext.function.BIF serializeJsonBif =
-						engine.getClassUtil().loadBIF(pc, "lucee.runtime.functions.conversion.SerializeJSON");
+					lucee.runtime.ext.function.BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
 					result.value = (String) serializeJsonBif.invoke(pc, new Object[] { metadata, "struct" });
 				} finally {
 					releaseMethod.invoke(null);
@@ -515,11 +514,9 @@ public class NativeLuceeVm implements ILuceeVm {
 
 				try {
 					if (asJson) {
-						// Load SerializeJSON via the loader so BIF resolution works across
-						// OSGi bundle boundaries (see doGetMetadataWithPageContext).
+						// Resolve via FunctionLib by short name (see doGetMetadataWithPageContext).
 						lucee.loader.engine.CFMLEngine engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
-						lucee.runtime.ext.function.BIF serializeJsonBif =
-							engine.getClassUtil().loadBIF(pc, "lucee.runtime.functions.conversion.SerializeJSON");
+						lucee.runtime.ext.function.BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
 						result.value = (String) serializeJsonBif.invoke(pc, new Object[] { dumpable, "struct" });
 					} else {
 						// Use DumpUtil to get DumpData, then HTMLDumpWriter to render
