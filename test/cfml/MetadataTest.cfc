@@ -37,11 +37,18 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 		var response = dap.getMetadata( localStruct.variablesReference );
 
-		expect( isJSON( response.body.content ) ).toBeTrue();
+		systemOutput( "getMetadata content: #response.body.content#", true );
 
-		if ( !isNativeMode() ) {
+		expect( isJSON( response.body.content ) ).toBeTrue();
+		var parsed = deserializeJSON( response.body.content );
+
+		if ( isNativeMode() ) {
+			// Native should return GetMetaData's result serialized - a struct.
+			// Any JSON string (e.g. "Error: ..." or "getMetadata failed") means a fallback fired.
+			expect( parsed ).toBeTypeOf( "struct" );
+		} else {
 			// Agent / JDWP mode is a stub - returns a fixed marker string.
-			expect( deserializeJSON( response.body.content ) ).toBe( "getMetadata not supported in JDWP mode" );
+			expect( parsed ).toBe( "getMetadata not supported in JDWP mode" );
 		}
 
 		// Regression guard: server still responsive after the call.
