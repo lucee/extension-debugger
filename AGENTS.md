@@ -55,6 +55,10 @@ The test architecture uses two separate Lucee instances:
 
 Tests set breakpoints, trigger HTTP requests to the debuggee, and verify the debugger stops at the right places.
 
+### TDD plan — write the failing test first
+
+Red-green-refactor. No repro, no fix.
+
 ### Debugging GitHub Actions Failures
 
 When a workflow fails, download logs locally for inspection:
