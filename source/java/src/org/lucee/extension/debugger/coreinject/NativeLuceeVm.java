@@ -418,17 +418,16 @@ public class NativeLuceeVm implements ILuceeVm {
 				registerMethod.invoke(null, pc);
 
 				try {
-					// Call GetMetaData.call(PageContext, Object)
-					Class<?> getMetaDataClass = cl.loadClass("lucee.runtime.functions.system.GetMetaData");
-					java.lang.reflect.Method callMethod = getMetaDataClass.getMethod("call",
-						PageContext.class, Object.class);
-					Object metadata = callMethod.invoke(null, pc, obj);
+					// Use the loader-provided BIF resolver so BIF classes resolve across
+					// OSGi bundle imports (lucee.core doesn't self-import functions.system).
+					lucee.loader.engine.CFMLEngine engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
+					lucee.runtime.ext.function.BIF getMetaDataBif =
+						engine.getClassUtil().loadBIF(pc, "lucee.runtime.functions.system.GetMetaData");
+					Object metadata = getMetaDataBif.invoke(pc, new Object[] { obj });
 
-					// Serialize the metadata to JSON
-					Class<?> serializeClass = cl.loadClass("lucee.runtime.functions.conversion.SerializeJSON");
-					java.lang.reflect.Method serializeMethod = serializeClass.getMethod("call",
-						PageContext.class, Object.class, Object.class);
-					result.value = (String) serializeMethod.invoke(null, pc, metadata, "struct");
+					lucee.runtime.ext.function.BIF serializeJsonBif =
+						engine.getClassUtil().loadBIF(pc, "lucee.runtime.functions.conversion.SerializeJSON");
+					result.value = (String) serializeJsonBif.invoke(pc, new Object[] { metadata, "struct" });
 				} finally {
 					releaseMethod.invoke(null);
 				}
@@ -516,11 +515,12 @@ public class NativeLuceeVm implements ILuceeVm {
 
 				try {
 					if (asJson) {
-						// Call SerializeJSON
-						Class<?> serializeClass = cl.loadClass("lucee.runtime.functions.conversion.SerializeJSON");
-						java.lang.reflect.Method callMethod = serializeClass.getMethod("call",
-							PageContext.class, Object.class, Object.class);
-						result.value = (String) callMethod.invoke(null, pc, dumpable, "struct");
+						// Load SerializeJSON via the loader so BIF resolution works across
+						// OSGi bundle boundaries (see doGetMetadataWithPageContext).
+						lucee.loader.engine.CFMLEngine engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
+						lucee.runtime.ext.function.BIF serializeJsonBif =
+							engine.getClassUtil().loadBIF(pc, "lucee.runtime.functions.conversion.SerializeJSON");
+						result.value = (String) serializeJsonBif.invoke(pc, new Object[] { dumpable, "struct" });
 					} else {
 						// Use DumpUtil to get DumpData, then HTMLDumpWriter to render
 						result.value = wrapDumpInHtmlDoc(dumpObjectAsHtml(pc, cl, dumpable));
