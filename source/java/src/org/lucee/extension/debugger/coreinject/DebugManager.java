@@ -254,8 +254,8 @@ public class DebugManager implements IDebugManager {
                 lucee.runtime.engine.ThreadLocalPageContext.release();
             }
             catch (Throwable e) {
+                // Log only - never kill the host JVM. The preset result.value fallback stands.
                 e.printStackTrace();
-                System.exit(1);
             }
         });
 
@@ -267,13 +267,7 @@ public class DebugManager implements IDebugManager {
             thread.join();
         }
         catch (Throwable e) {
-            if (thread.isAlive()) {
-                e.printStackTrace();
-                System.exit(1);
-            }
-            else {
-                // thread is joined, discard exception
-            }
+            e.printStackTrace();
         }
 
         return result.value;
@@ -305,8 +299,8 @@ public class DebugManager implements IDebugManager {
                 lucee.runtime.engine.ThreadLocalPageContext.release();
             }
             catch (Throwable e) {
+                // Log only - never kill the host JVM. The preset result.value fallback stands.
                 e.printStackTrace();
-                System.exit(1);
             }
         });
 
@@ -318,13 +312,7 @@ public class DebugManager implements IDebugManager {
             thread.join();
         }
         catch (Throwable e) {
-            if (thread.isAlive()) {
-                e.printStackTrace();
-                System.exit(1);
-            }
-            else {
-                // thread is joined, discard exception
-            }
+            e.printStackTrace();
         }
 
         return result.value;
