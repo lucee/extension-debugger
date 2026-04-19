@@ -572,8 +572,7 @@ public class DebugManager implements IDebugManager {
     public void registerStepRequest(Thread thread, int type) {
         DebugFrame frame = getTopmostFrame(thread);
         if (frame == null) {
-            System.out.println("[luceedebug] registerStepRequest found no frames");
-            System.exit(1);
+            System.err.println("[luceedebug] registerStepRequest: no frames for thread '" + thread + "' (type=" + type + ") - step request ignored");
             return;
         }
 
@@ -588,8 +587,7 @@ public class DebugManager implements IDebugManager {
                 return;
             }
             default: {
-                System.out.println("[luceedebug] bad step type");
-                System.exit(1);
+                System.err.println("[luceedebug] registerStepRequest: unknown step type=" + type + " for thread '" + thread + "' - step request ignored");
                 return;
             }
         }
@@ -794,8 +792,8 @@ public class DebugManager implements IDebugManager {
         DebugFrame poppedFrame = null;
 
         if (maybeNull_frameListing.isEmpty()) {
-            System.out.println("Popping from an empty stack?");
-            System.exit(1);
+            System.err.println("[luceedebug] popFrame: frame stack for thread '" + currentThread + "' is empty - ignoring pop");
+            return;
         }
         else {
             poppedFrame = maybeNull_frameListing.remove(maybeNull_frameListing.size() - 1);
