@@ -27,6 +27,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 			getArtifactPath( "udfInclude/inner.cfm" ),
 			getArtifactPath( "cfmoduleFromUdf/widget.cfm" ),
 			getArtifactPath( "customTagFromUdf/widget.cfm" ),
+			getArtifactPath( "customTagDoubleFireFromUdf/widget.cfm" ),
 			getArtifactPath( "nestedIncludeFromUdf/deep.cfm" )
 		];
 	}
@@ -110,26 +111,67 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		);
 	}
 
-	// TODO: agent-mode continueThread doesn't release HTTP when suspended
-	// inside cfmodule; HTTP times out and poisons the event stream. See STATUS.md.
-	function testBreakpointInIncludedPage_cfmoduleFromUdf() skip="true" {
+	// cfmodule from UDF — widget.cfm is dispatched as a custom tag (runs
+	// twice: start + end). Artifact guards with `exit "exitTag"` in end
+	// mode so bp fires once; echo shifts to line 3.
+	function testBreakpointInIncludedPage_cfmoduleFromUdf() {
 		runIncludedBreakpointTest(
 			scenario       = "cfmodule",
 			httpPath       = "cfmoduleFromUdf/index.cfm",
 			includedFile   = "cfmoduleFromUdf/widget.cfm",
-			excludedMarker = "cfmoduleFromUdf/index.cfm"
+			excludedMarker = "cfmoduleFromUdf/index.cfm",
+			bpLine         = 3
 		);
 	}
 
-	// TODO: <cf_widget/> fires widget.cfm twice (start + end modes);
-	// the second stopped event survives drains and contaminates the next test.
-	function testBreakpointInIncludedPage_customTagFromUdf() skip="true" {
+	// Custom tag from UDF — same execution-mode guard as cfmodule above.
+	function testBreakpointInIncludedPage_customTagFromUdf() {
 		runIncludedBreakpointTest(
 			scenario       = "customTag",
 			httpPath       = "customTagFromUdf/index.cfm",
 			includedFile   = "customTagFromUdf/widget.cfm",
-			excludedMarker = "customTagFromUdf/index.cfm"
+			excludedMarker = "customTagFromUdf/index.cfm",
+			bpLine         = 3
 		);
+	}
+
+	// Variation: unguarded custom tag so widget.cfm runs in BOTH modes.
+	// Proves the debugger handles a single bp firing twice on the same
+	// thread across consecutive custom-tag execution modes.
+	function testCustomTagFiresBreakpointInBothExecutionModes() {
+		var bpPath = getArtifactPath( "customTagDoubleFireFromUdf/widget.cfm" );
+		systemOutput( "customTagDoubleFire: bpPath=#bpPath#", true );
+
+		triggerArtifact( "customTagDoubleFireFromUdf/index.cfm" );
+		waitForHttpComplete();
+
+		var bpResponse = dap.setBreakpoints( bpPath, [ variables.echoLine ] );
+		expect( bpResponse.body.breakpoints[ 1 ].verified ).toBeTrue();
+
+		triggerArtifact( "customTagDoubleFireFromUdf/index.cfm" );
+		sleep( 500 );
+
+		// First fire — start mode
+		var firstStop = dap.waitForEvent( "stopped", 3000 );
+		expect( firstStop.body.reason ).toBe( "breakpoint" );
+		var firstFrame = getTopFrame( firstStop.body.threadId );
+		expect( firstFrame.source.path ).toInclude( "customTagDoubleFireFromUdf/widget.cfm" );
+		expect( firstFrame.line ).toBe( variables.echoLine );
+
+		dap.continueThread( firstStop.body.threadId );
+
+		// Second fire — end mode, same thread
+		var secondStop = dap.waitForEvent( "stopped", 3000 );
+		expect( secondStop.body.reason ).toBe( "breakpoint" );
+		expect( secondStop.body.threadId ).toBe( firstStop.body.threadId,
+			"Second fire should be on same thread. Got #secondStop.body.threadId#, expected #firstStop.body.threadId#"
+		);
+		var secondFrame = getTopFrame( secondStop.body.threadId );
+		expect( secondFrame.source.path ).toInclude( "customTagDoubleFireFromUdf/widget.cfm" );
+		expect( secondFrame.line ).toBe( variables.echoLine );
+
+		cleanupThread( secondStop.body.threadId );
+		clearBreakpoints( bpPath );
 	}
 
 	// Nested cfinclude depth 2 — UDF → middle.cfm → deep.cfm, bp in deep.cfm.
@@ -142,8 +184,11 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		);
 	}
 
-	// TODO: enable once Part D (debugger-frame-synthetic-include-frames.md) lands.
-	function testIncludeFrameNameShowsIncludedFile() skip="true" {
+	function testIncludeFrameNameShowsIncludedFile() {
+		if ( !isNativeMode() ) {
+			systemOutput( "frameName: agent mode — skipping native-only Part D test", true );
+			return;
+		}
 		var bpPath = getArtifactPath( "udfInclude/inner.cfm" );
 
 		triggerArtifact( "udfInclude/index.cfm" );
@@ -268,10 +313,11 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		required string httpPath,
 		required string includedFile,
 		required string excludedMarker,
-		boolean allowErrors = false
+		boolean allowErrors = false,
+		numeric bpLine = variables.echoLine
 	) {
 		var bpPath = getArtifactPath( arguments.includedFile );
-		systemOutput( "#arguments.scenario#: bpPath=#bpPath#", true );
+		systemOutput( "#arguments.scenario#: bpPath=#bpPath# bpLine=#arguments.bpLine#", true );
 
 		// Agent mode can only verify a breakpoint on a template once its
 		// class has been compiled. The included file isn't compiled until
@@ -280,12 +326,12 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		triggerArtifact( arguments.httpPath, {}, arguments.allowErrors );
 		waitForHttpComplete();
 
-		var bpResponse = dap.setBreakpoints( bpPath, [ variables.echoLine ] );
+		var bpResponse = dap.setBreakpoints( bpPath, [ arguments.bpLine ] );
 		systemOutput( "#arguments.scenario#: setBreakpoints response=#serializeJSON( bpResponse )#", true );
 
 		expect( bpResponse.body.breakpoints ).toHaveLength( 1 );
 		expect( bpResponse.body.breakpoints[ 1 ].verified ).toBeTrue(
-			"#arguments.scenario#: breakpoint on #arguments.includedFile#:#variables.echoLine# should be verified"
+			"#arguments.scenario#: breakpoint on #arguments.includedFile#:#arguments.bpLine# should be verified"
 		);
 
 		triggerArtifact( arguments.httpPath, {}, arguments.allowErrors );
@@ -304,8 +350,8 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		expect( framePath ).notToInclude( arguments.excludedMarker,
 			"#arguments.scenario#: top frame should NOT be #arguments.excludedMarker#. Got: #framePath#"
 		);
-		expect( frame.line ).toBe( variables.echoLine,
-			"#arguments.scenario#: top frame line should be #variables.echoLine#, got #frame.line#"
+		expect( frame.line ).toBe( arguments.bpLine,
+			"#arguments.scenario#: top frame line should be #arguments.bpLine#, got #frame.line#"
 		);
 
 		cleanupThread( stopped.body.threadId );

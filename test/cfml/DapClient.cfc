@@ -63,11 +63,11 @@ component {
 		return response;
 	}
 
-	public struct function attach( required string secret, struct pathTransforms = {}, boolean consoleOutput = false, string logLevel = "", boolean logExceptions = false ) {
+	public struct function attach( required string secret, array pathTransforms = [], boolean consoleOutput = false, string logLevel = "", boolean logExceptions = false ) {
 		var args = {
 			"secret": arguments.secret
 		};
-		if ( !structIsEmpty( arguments.pathTransforms ) ) {
+		if ( arguments.pathTransforms.len() ) {
 			args[ "pathTransforms" ] = arguments.pathTransforms;
 		}
 		if ( arguments.consoleOutput ) {

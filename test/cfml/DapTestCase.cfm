@@ -14,7 +14,7 @@ variables.debuggeeArtifactPath = server.system.environment.DEBUGGEE_ARTIFACT_PAT
 variables.httpThread = "";
 variables.httpResult = {};
 
-function setupDap( boolean attach = true, boolean consoleOutput = false, string logLevel = "", boolean logExceptions = false ) {
+function setupDap( boolean attach = true, boolean consoleOutput = false, string logLevel = "", boolean logExceptions = false, array pathTransforms = [] ) {
 	variables.dapHost = server.system.environment.DAP_HOST ?: "localhost";
 	variables.dapPort = val( server.system.environment.DAP_PORT ?: 10000 );
 	variables.debuggeeHttp = server.system.environment.DEBUGGEE_HTTP ?: "http://localhost:8888";
@@ -54,7 +54,7 @@ function setupDap( boolean attach = true, boolean consoleOutput = false, string 
 	systemOutput( "DapTestCase: Capabilities: #serializeJSON( variables.capabilities )#", true );
 
 	if ( arguments.attach ) {
-		variables.dap.attach( variables.dapSecret, {}, arguments.consoleOutput, arguments.logLevel, arguments.logExceptions );
+		variables.dap.attach( variables.dapSecret, arguments.pathTransforms, arguments.consoleOutput, arguments.logLevel, arguments.logExceptions );
 		variables.dap.configurationDone();
 	}
 }
