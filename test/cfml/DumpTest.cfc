@@ -1,11 +1,11 @@
 /**
  * Tests for DAP dump / dumpAsJSON custom requests.
  *
- * Regression guard for <https://dev.lucee.org/t/extension-debugger-crashes-lucee-6-when-dumping-a-variable/17209>:
- * pre-fix, dumping on Lucee 6.2 (agent mode) throws NoSuchMethodError inside the
- * javax/jakarta servlet-API mismatch, and System.exit(1) in the catch block kills
- * the host JVM. The strongest signal here is that the DAP server is still responsive
- * after the dump call.
+ * Originally a regression guard for <https://dev.lucee.org/t/extension-debugger-crashes-lucee-6-when-dumping-a-variable/17209>
+ * (Lucee 6.2 agent: NoSuchMethodError from a javax/jakarta servlet-API mismatch,
+ * caught and then System.exit(1) killed the host JVM). Coverage has since grown
+ * to exercise the full dump walker: struct / array / nested / null fields /
+ * scope-level dump, plus JSON round-trips and server-survives-bogus-ref guards.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 

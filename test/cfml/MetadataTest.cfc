@@ -1,9 +1,9 @@
 /**
  * Tests for DAP getMetadata custom request.
  *
- * Native mode: calls lucee.runtime.functions.system.GetMetaData via reflection
- * and returns JSON-serialized metadata (or a JSON-encoded error string if
- * GetMetaData throws for the target type).
+ * Native mode: resolves getMetaData + serializeJSON via ClassUtil.loadBIF and
+ * returns the JSON-serialized metadata (or a JSON-encoded error string if the
+ * BIF throws for the target type).
  * Agent / JDWP mode: returns the literal JSON string "getMetadata not supported in JDWP mode".
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
@@ -47,9 +47,12 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		var parsed = deserializeJSON( response.body.content );
 
 		if ( isNativeMode() ) {
-			// Native should return GetMetaData's result serialized - a struct.
-			// Any JSON string (e.g. "Error: ..." or "getMetadata failed") means a fallback fired.
+			// Native: getMetaData on a plain struct returns the Java class reflection
+			// metadata - keys like name, class, ordered. Assert specifics, not just "it's a struct",
+			// otherwise a decoded error-JSON ("Error: ...") would also pass.
 			expect( parsed ).toBeTypeOf( "struct" );
+			expect( parsed ).toHaveKey( "name" );
+			expect( parsed.name ).toInclude( "StructImpl" );
 		} else {
 			// Agent / JDWP mode is a stub - returns a fixed marker string.
 			expect( parsed ).toBe( "getMetadata not supported in JDWP mode" );

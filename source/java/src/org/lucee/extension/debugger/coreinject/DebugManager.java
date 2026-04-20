@@ -273,7 +273,6 @@ public class DebugManager implements IDebugManager {
                         lucee.runtime.type.FunctionValueImpl.newInstance(lucee.runtime.type.util.KeyConstants.___isweb, Boolean.FALSE),
                         lucee.runtime.type.FunctionValueImpl.newInstance(lucee.runtime.type.util.KeyConstants.___mapping, "/mapping-function"),
                         dumpable
-                        //LiteralArray.call(var1, new Object[]{LiteralValue.toNumber(var1, 0L)})
                     });
 
                 freshEphemeralPageContext.flush();
