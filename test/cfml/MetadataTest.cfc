@@ -57,4 +57,47 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		cleanupThread( threadId );
 	}
 
+	function testGetMetadata_onComponent_returnsFunctionAndPropertyMetadata() {
+		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+		triggerArtifact( "variables-target.cfm" );
+
+		var stopped = dap.waitForEvent( "stopped", 2000 );
+		var threadId = stopped.body.threadId;
+
+		var frame = getTopFrame( threadId );
+		var localComponent = getVariableByName( getScopeByName( frame.id, "Local" ).variablesReference, "localComponent" );
+
+		var response = dap.getMetadata( localComponent.variablesReference );
+
+		expect( isJSON( response.body.content ) ).toBeTrue();
+		var parsed = deserializeJSON( response.body.content );
+
+		if ( isNativeMode() ) {
+			expect( parsed ).toBeTypeOf( "struct" );
+			expect( parsed.name ).toBe( "SampleComponent" );
+
+			// greet() function surfaces with correct signature.
+			var greetFns = parsed.functions.filter( ( fn ) => fn.name == "greet" );
+			expect( arrayLen( greetFns ) ).toBe( 1 );
+			var greet = greetFns[ 1 ];
+			expect( greet.returntype ).toBe( "string" );
+			expect( greet.access ).toBe( "public" );
+			expect( arrayLen( greet.parameters ) ).toBe( 1 );
+			expect( greet.parameters[ 1 ].name ).toBe( "who" );
+			expect( greet.parameters[ 1 ].required ).toBeTrue();
+
+			// accessor-backed `foo` property surfaces with its declared type.
+			var fooProps = parsed.properties.filter( ( p ) => p.name == "foo" );
+			expect( arrayLen( fooProps ) ).toBe( 1 );
+			expect( fooProps[ 1 ].type ).toBe( "string" );
+		} else {
+			// Agent / JDWP mode — stub path must not JVM-exit.
+			expect( parsed ).toBe( "getMetadata not supported in JDWP mode" );
+		}
+
+		expect( dap.threads() ).toHaveKey( "body" );
+
+		cleanupThread( threadId );
+	}
+
 }

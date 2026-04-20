@@ -40,9 +40,11 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 		var response = dap.dump( localStruct.variablesReference );
 
-		expect( response.body.content contains "something went wrong" ).toBeFalse();
-		expect( response.body.content contains "dump failed" ).toBeFalse();
-		expect( len( response.body.content ) ).toBeGT( 0 );
+		expect( response.body.content ).toInclude( "name" );
+		expect( response.body.content ).toInclude( "test" );
+		expect( response.body.content ).toInclude( "123" );
+		expect( response.body.content ).toInclude( "deep" );       // proves nested struct recurses
+		expect( response.body.content ).toInclude( "nullField" );  // null-valued key survives dump walker
 
 		// Sanity: server still alive — a second DAP call works.
 		expect( dap.threads() ).toHaveKey( "body" );
@@ -62,9 +64,32 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 		var response = dap.dump( localArray.variablesReference );
 
-		expect( response.body.content contains "something went wrong" ).toBeFalse();
-		expect( response.body.content contains "dump failed" ).toBeFalse();
-		expect( len( response.body.content ) ).toBeGT( 0 );
+		expect( response.body.content ).toInclude( "four" );
+		expect( response.body.content ).toInclude( "nested" );  // proves struct-in-array recurses
+
+		cleanupThread( threadId );
+	}
+
+	function testDumpLocalScope_withNull_doesNotCrash() {
+		// Scope-level dump is the realistic regression case — the Local scope contains
+		// `localNull = nullValue()` alongside everything else. Pre-fix, walking a null entry
+		// tripped the System.exit(1) catch path and killed the JVM.
+		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+		triggerArtifact( "variables-target.cfm" );
+
+		var stopped = dap.waitForEvent( "stopped", 2000 );
+		var threadId = stopped.body.threadId;
+
+		var frame = getTopFrame( threadId );
+		var localScopeRef = getScopeByName( frame.id, "Local" ).variablesReference;
+
+		var response = dap.dump( localScopeRef );
+
+		expect( response.body.content ).toInclude( "localNull" );    // null key present in scope dump
+		expect( response.body.content ).toInclude( "localString" );  // other locals dumped alongside
+
+		// Server still alive after walking a scope with a null entry.
+		expect( dap.threads() ).toHaveKey( "body" );
 
 		cleanupThread( threadId );
 	}
@@ -83,20 +108,19 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 		var response = dap.dumpAsJSON( localStruct.variablesReference );
 
-		expect( response.body.content contains "something went wrong" ).toBeFalse();
 		expect( isJSON( response.body.content ) ).toBeTrue();
 
 		var parsed = deserializeJSON( response.body.content );
-		expect( parsed ).toHaveKey( "name" );
 		expect( parsed.name ).toBe( "test" );
+		expect( parsed.value ).toBe( 123 );
+		expect( parsed.nested.deep ).toBe( "value" );
+		expect( structKeyExists( parsed, "nullField" ) ).toBeTrue();  // null-valued key survives JSON round-trip
+		expect( isNull( parsed.nullField ) ).toBeTrue();
 
 		cleanupThread( threadId );
 	}
 
-	// ========== Server-survives-prior-error regression guard ==========
-
-	function testServerSurvivesDumpCall() {
-		// Pre-fix, System.exit(1) in the dump catch killed the JVM.
+	function testDumpAsJSON_roundTripsArray() {
 		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 		triggerArtifact( "variables-target.cfm" );
 
@@ -104,16 +128,63 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		var threadId = stopped.body.threadId;
 
 		var frame = getTopFrame( threadId );
-		var localStruct = getVariableByName( getScopeByName( frame.id, "Local" ).variablesReference, "localStruct" );
+		var localArray = getVariableByName( getScopeByName( frame.id, "Local" ).variablesReference, "localArray" );
 
-		// Swallow any dump-specific DAP error so we can still probe the server.
+		var response = dap.dumpAsJSON( localArray.variablesReference );
+
+		expect( isJSON( response.body.content ) ).toBeTrue();
+
+		var parsed = deserializeJSON( response.body.content );
+		expect( parsed ).toBeArray();
+		expect( parsed[ 1 ] ).toBe( 1 );
+		expect( parsed[ 4 ] ).toBe( "four" );
+		expect( parsed[ 5 ].nested ).toBeTrue();  // proves struct-in-array recurses
+
+		cleanupThread( threadId );
+	}
+
+	// ========== Server-survives-prior-error regression guard ==========
+
+	function testServerSurvivesDumpCall_onBogusReference() {
+		// Pre-fix, System.exit(1) in the dump catch killed the JVM on any dump error.
+		// Pass a bogus variablesReference to force the error path, then prove server is still alive.
+		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+		triggerArtifact( "variables-target.cfm" );
+
+		var stopped = dap.waitForEvent( "stopped", 2000 );
+		var threadId = stopped.body.threadId;
+
+		var threw = false;
 		try {
-			dap.dump( localStruct.variablesReference );
-		} catch ( any e ) {
-			systemOutput( "dump threw (acceptable here): #e.message#", true );
+			dap.dump( -99999 );
+		} catch ( DapClient.Error e ) {
+			threw = true;
 		}
+		expect( threw ).toBeTrue();  // server rejected it at protocol level instead of crashing
 
 		// If the JVM exited, this next call times out / the socket is dead.
+		var threadsResponse = dap.threads();
+		expect( threadsResponse ).toHaveKey( "body" );
+
+		cleanupThread( threadId );
+	}
+
+	function testServerSurvivesDumpAsJSONCall_onBogusReference() {
+		// Same regression guard as above, for the dumpAsJSON path.
+		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+		triggerArtifact( "variables-target.cfm" );
+
+		var stopped = dap.waitForEvent( "stopped", 2000 );
+		var threadId = stopped.body.threadId;
+
+		var threw = false;
+		try {
+			dap.dumpAsJSON( -99999 );
+		} catch ( DapClient.Error e ) {
+			threw = true;
+		}
+		expect( threw ).toBeTrue();
+
 		var threadsResponse = dap.threads();
 		expect( threadsResponse ).toHaveKey( "body" );
 
