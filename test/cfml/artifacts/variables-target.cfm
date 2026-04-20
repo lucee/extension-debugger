@@ -22,12 +22,10 @@ function testVariables( required string arg1, required numeric arg2 ) {
 		"value": 123,
 		"nested": {
 			"deep": "value"
-		},
-		"nullField": nullValue()
+		}
 	};
 	var localDate = now();
-	var localNull = nullValue();
-	var localComponent = new SampleComponent();
+	var localNull = javacast( "null", 0 );
 
 	// Access various scopes
 	var fromUrl = url.urlVar;

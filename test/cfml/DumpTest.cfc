@@ -12,18 +12,22 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 	include "DapTestCase.cfm";
 
 	variables.targetFile = "";
+	variables.nullTargetFile = "";
 
 	variables.lines = {
-		debugLine: 35  // var debugLine = "inspect here";
+		debugLine: 35,       // variables-target.cfm
+		nullDebugLine: 19    // null-target.cfm
 	};
 
 	function beforeAll() {
 		setupDap();
 		variables.targetFile = getArtifactPath( "variables-target.cfm" );
+		variables.nullTargetFile = getArtifactPath( "null-target.cfm" );
 	}
 
 	function afterEach() {
 		clearBreakpoints( variables.targetFile );
+		clearBreakpoints( variables.nullTargetFile );
 	}
 
 	// ========== dump ==========
@@ -43,8 +47,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		expect( response.body.content ).toInclude( "name" );
 		expect( response.body.content ).toInclude( "test" );
 		expect( response.body.content ).toInclude( "123" );
-		expect( response.body.content ).toInclude( "deep" );       // proves nested struct recurses
-		expect( response.body.content ).toInclude( "nullField" );  // null-valued key survives dump walker
+		expect( response.body.content ).toInclude( "deep" );  // proves nested struct recurses
 
 		// Sanity: server still alive — a second DAP call works.
 		expect( dap.threads() ).toHaveKey( "body" );
@@ -70,12 +73,35 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		cleanupThread( threadId );
 	}
 
+	function testDumpStruct_withNullField_doesNotCrash() {
+		// Null-valued struct keys exercise the dump walker's handling of
+		// structKeyExists=true / isNull=true entries.
+		dap.setBreakpoints( variables.nullTargetFile, [ lines.nullDebugLine ] );
+		triggerArtifact( "null-target.cfm" );
+
+		var stopped = dap.waitForEvent( "stopped", 2000 );
+		var threadId = stopped.body.threadId;
+
+		var frame = getTopFrame( threadId );
+		var localStruct = getVariableByName( getScopeByName( frame.id, "Local" ).variablesReference, "localStruct" );
+
+		var response = dap.dump( localStruct.variablesReference );
+
+		expect( response.body.content ).toInclude( "name" );
+		expect( response.body.content ).toInclude( "test" );
+		expect( response.body.content ).toInclude( "nullField" );  // null-valued key in dump
+
+		expect( dap.threads() ).toHaveKey( "body" );
+
+		cleanupThread( threadId );
+	}
+
 	function testDumpLocalScope_withNull_doesNotCrash() {
 		// Scope-level dump is the realistic regression case — the Local scope contains
 		// `localNull = nullValue()` alongside everything else. Pre-fix, walking a null entry
 		// tripped the System.exit(1) catch path and killed the JVM.
-		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
-		triggerArtifact( "variables-target.cfm" );
+		dap.setBreakpoints( variables.nullTargetFile, [ lines.nullDebugLine ] );
+		triggerArtifact( "null-target.cfm" );
 
 		var stopped = dap.waitForEvent( "stopped", 2000 );
 		var threadId = stopped.body.threadId;
@@ -114,8 +140,6 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		expect( parsed.name ).toBe( "test" );
 		expect( parsed.value ).toBe( 123 );
 		expect( parsed.nested.deep ).toBe( "value" );
-		expect( structKeyExists( parsed, "nullField" ) ).toBeTrue();  // null-valued key survives JSON round-trip
-		expect( isNull( parsed.nullField ) ).toBeTrue();
 
 		cleanupThread( threadId );
 	}
@@ -139,6 +163,28 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		expect( parsed[ 1 ] ).toBe( 1 );
 		expect( parsed[ 4 ] ).toBe( "four" );
 		expect( parsed[ 5 ].nested ).toBeTrue();  // proves struct-in-array recurses
+
+		cleanupThread( threadId );
+	}
+
+	function testDumpAsJSON_structWithNullField_roundTrips() {
+		dap.setBreakpoints( variables.nullTargetFile, [ lines.nullDebugLine ] );
+		triggerArtifact( "null-target.cfm" );
+
+		var stopped = dap.waitForEvent( "stopped", 2000 );
+		var threadId = stopped.body.threadId;
+
+		var frame = getTopFrame( threadId );
+		var localStruct = getVariableByName( getScopeByName( frame.id, "Local" ).variablesReference, "localStruct" );
+
+		var response = dap.dumpAsJSON( localStruct.variablesReference );
+
+		expect( isJSON( response.body.content ) ).toBeTrue();
+
+		var parsed = deserializeJSON( response.body.content );
+		expect( parsed.name ).toBe( "test" );
+		expect( structKeyExists( parsed, "nullField" ) ).toBeTrue();  // null-valued key survives JSON round-trip
+		expect( isNull( parsed.nullField ) ).toBeTrue();
 
 		cleanupThread( threadId );
 	}

@@ -11,18 +11,22 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 	include "DapTestCase.cfm";
 
 	variables.targetFile = "";
+	variables.componentTargetFile = "";
 
 	variables.lines = {
-		debugLine: 35
+		debugLine: 35,           // variables-target.cfm
+		componentDebugLine: 9    // metadata-component-target.cfm
 	};
 
 	function beforeAll() {
 		setupDap();
 		variables.targetFile = getArtifactPath( "variables-target.cfm" );
+		variables.componentTargetFile = getArtifactPath( "metadata-component-target.cfm" );
 	}
 
 	function afterEach() {
 		clearBreakpoints( variables.targetFile );
+		clearBreakpoints( variables.componentTargetFile );
 	}
 
 	function testGetMetadata_returnsValidJson() {
@@ -58,8 +62,8 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 	}
 
 	function testGetMetadata_onComponent_returnsFunctionAndPropertyMetadata() {
-		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
-		triggerArtifact( "variables-target.cfm" );
+		dap.setBreakpoints( variables.componentTargetFile, [ lines.componentDebugLine ] );
+		triggerArtifact( "metadata-component-target.cfm" );
 
 		var stopped = dap.waitForEvent( "stopped", 2000 );
 		var threadId = stopped.body.threadId;
@@ -74,7 +78,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 		if ( isNativeMode() ) {
 			expect( parsed ).toBeTypeOf( "struct" );
-			expect( parsed.name ).toBe( "SampleComponent" );
+			expect( parsed.name ).toEndWith( "SampleComponent" );  // Lucee returns the fully-qualified name
 
 			// greet() function surfaces with correct signature.
 			var greetFns = parsed.functions.filter( ( fn ) => fn.name == "greet" );
