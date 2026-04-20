@@ -552,8 +552,8 @@ public class NativeLuceeVm implements ILuceeVm {
 		Class<?> dumpPropertiesClass = cl.loadClass("lucee.runtime.dump.DumpProperties");
 		Class<?> dumpDataClass = cl.loadClass("lucee.runtime.dump.DumpData");
 
-		// Get default dump properties - use DEFAULT_RICH field
-		java.lang.reflect.Field defaultField = dumpPropertiesClass.getField("DEFAULT_RICH");
+		// Get default dump properties - use DEFAULT singleton instance
+		java.lang.reflect.Field defaultField = dumpPropertiesClass.getField("DEFAULT");
 		Object dumpProps = defaultField.get(null);
 
 		// toDumpData(PageContext, Object, int maxlevel, DumpProperties)
