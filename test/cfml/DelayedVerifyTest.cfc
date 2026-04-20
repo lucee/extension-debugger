@@ -11,77 +11,84 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		variables.targetFile = getArtifactPath( "delayedVerify/target.cfm" );
 	}
 
-	function beforeEach() {
-		dap.drainEvents();
-	}
+	function run( testResults, testBox ) {
+		describe( "Delayed breakpoint verification", function() {
 
-	// See TemplateIncludeTest.afterEach for order rationale.
-	function afterEach() {
-		systemOutput( "afterEach: draining debug state", true );
+			beforeEach( function() {
+				dap.drainEvents();
+			} );
 
-		clearBreakpoints( variables.targetFile );
+			// See TemplateIncludeTest.afterEach for order rationale.
+			afterEach( function() {
+				systemOutput( "afterEach: draining debug state", true );
 
-		var threadList = dap.threads();
-		for ( var t in threadList.body.threads ) {
-			try {
-				dap.continueThread( t.id );
-			} catch ( any e ) {
-				systemOutput( "afterEach: continue thread #t.id# (ok if not suspended): #e.stacktrace#", true );
-			}
-		}
+				clearBreakpoints( variables.targetFile );
 
-		try {
-			waitForHttpComplete( 3000 );
-		} catch ( any e ) {
-			systemOutput( "afterEach: http drain timeout ignored: #e.stacktrace#", true );
-		}
+				for ( var threadId in dap.getSuspendedThreadIds() ) {
+					try {
+						dap.continueThread( threadId );
+					} catch ( any e ) {
+						systemOutput( "afterEach: continue thread #threadId# (ok if not suspended): #e.stacktrace#", true );
+					}
+				}
 
-		dap.drainEvents();
-	}
+				try {
+					waitForHttpComplete( 3000 );
+				} catch ( any e ) {
+					systemOutput( "afterEach: http drain timeout ignored: #e.stacktrace#", true );
+				}
 
-	// Agent-mode only: native verifies bps immediately; this replay path
-	// is agent-specific. skip="skipOnNative" attribute didn't fire in
-	// TestBox (cause not diagnosed) — runtime guard instead.
-	function testPendingBreakpointVerifiesAfterFirstCompile() {
-		if ( isNativeMode() ) {
-			systemOutput( "delayedVerify: native verifies immediately — skipping agent-replay test", true );
-			return;
-		}
+				dap.drainEvents();
+			} );
 
-		var bpLine = 2;
+			// Native verifies breakpoints immediately, so this replay path only
+			// exercises the agent-mode placeholder flow. Runtime guard (not
+			// BDD skip=) because skip= evaluates at spec-register time —
+			// before beforeAll runs setupDap — so isNativeMode() would be
+			// false there regardless of mode.
+			it( "pending breakpoint verifies after first compile (agent-mode replay)", function() {
+				if ( isNativeMode() ) {
+					systemOutput( "delayedVerify: native verifies immediately — skipping agent-replay test", true );
+					return;
+				}
 
-		dap.drainEvents();
+				var bpLine = 2;
 
-		var bpResponse = dap.setBreakpoints( variables.targetFile, [ bpLine ] );
-		systemOutput( "delayedVerify: initial bpResponse=#serializeJSON( bpResponse )#", true );
+				dap.drainEvents();
 
-		expect( bpResponse.body.breakpoints ).toHaveLength( 1 );
-		var placeholder = bpResponse.body.breakpoints[ 1 ];
-		expect( placeholder.verified ).toBeFalse(
-			"Agent mode should return verified:false for an uncompiled template. Got: #placeholder.verified#"
-		);
-		expect( placeholder ).toHaveKey( "id",
-			"Placeholder must carry an id to correlate with the later changed event"
-		);
-		var bpId = placeholder.id;
+				var bpResponse = dap.setBreakpoints( variables.targetFile, [ bpLine ] );
+				systemOutput( "delayedVerify: initial bpResponse=#serializeJSON( bpResponse )#", true );
 
-		triggerArtifact( "delayedVerify/target.cfm" );
-		var changed = dap.waitForEvent( "breakpoint", 5000 );
-		systemOutput( "delayedVerify: changed event=#serializeJSON( changed )#", true );
+				expect( bpResponse.body.breakpoints ).toHaveLength( 1 );
+				var placeholder = bpResponse.body.breakpoints[ 1 ];
+				expect( placeholder.verified ).toBeFalse(
+					"Agent mode should return verified:false for an uncompiled template. Got: #placeholder.verified#"
+				);
+				expect( placeholder ).toHaveKey( "id",
+					"Placeholder must carry an id to correlate with the later changed event"
+				);
+				var bpId = placeholder.id;
 
-		expect( changed.body.reason ).toBe( "changed",
-			"Post-compile event must be reason='changed', got: #changed.body.reason#"
-		);
-		expect( changed.body.breakpoint.verified ).toBeTrue(
-			"After compile + rebindBreakpoints, breakpoint must be verified:true"
-		);
-		expect( changed.body.breakpoint.id ).toBe( bpId,
-			"Replayed breakpoint id #changed.body.breakpoint.id# must match original placeholder id #bpId# — otherwise the IDE can't flip the marker"
-		);
+				triggerArtifact( "delayedVerify/target.cfm" );
+				var changed = dap.waitForEvent( "breakpoint", 5000 );
+				systemOutput( "delayedVerify: changed event=#serializeJSON( changed )#", true );
 
-		var stopped = dap.waitForEvent( "stopped", 3000 );
-		expect( stopped.body.reason ).toBe( "breakpoint" );
+				expect( changed.body.reason ).toBe( "changed",
+					"Post-compile event must be reason='changed', got: #changed.body.reason#"
+				);
+				expect( changed.body.breakpoint.verified ).toBeTrue(
+					"After compile + rebindBreakpoints, breakpoint must be verified:true"
+				);
+				expect( changed.body.breakpoint.id ).toBe( bpId,
+					"Replayed breakpoint id #changed.body.breakpoint.id# must match original placeholder id #bpId# — otherwise the IDE can't flip the marker"
+				);
 
-		cleanupThread( stopped.body.threadId );
+				var stopped = dap.waitForEvent( "stopped", 3000 );
+				expect( stopped.body.reason ).toBe( "breakpoint" );
+
+				cleanupThread( stopped.body.threadId );
+			} );
+
+		} );
 	}
 }

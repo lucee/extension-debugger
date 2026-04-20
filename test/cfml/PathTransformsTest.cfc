@@ -31,83 +31,109 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		variables.serverPath = getArtifactPath( variables.targetRelative );
 	}
 
-	function beforeEach() {
-		dap.drainEvents();
-	}
+	function run( testResults, testBox ) {
+		describe( "DAP pathTransforms (ide ↔ server prefix rewriting)", function() {
 
-	function afterEach() {
-		systemOutput( "afterEach: draining debug state", true );
+			beforeEach( function() {
+				dap.drainEvents();
+			} );
 
-		try {
-			clearBreakpoints( variables.idePath );
-		} catch ( any e ) {
-			systemOutput( "afterEach: clearBreakpoints ignored: #e.stacktrace#", true );
-		}
+			afterEach( function() {
+				systemOutput( "afterEach: draining debug state", true );
 
-		var threadList = dap.threads();
-		for ( var t in threadList.body.threads ) {
-			try {
-				dap.continueThread( t.id );
-			} catch ( any e ) {
-				systemOutput( "afterEach: continue thread #t.id# (ok if not suspended): #e.stacktrace#", true );
-			}
-		}
+				try {
+					clearBreakpoints( variables.idePath );
+				} catch ( any e ) {
+					systemOutput( "afterEach: clearBreakpoints ignored: #e.stacktrace#", true );
+				}
 
-		try {
-			waitForHttpComplete( 3000 );
-		} catch ( any e ) {
-			systemOutput( "afterEach: http drain timeout ignored: #e.stacktrace#", true );
-		}
+				for ( var threadId in dap.getSuspendedThreadIds() ) {
+					try {
+						dap.continueThread( threadId );
+					} catch ( any e ) {
+						systemOutput( "afterEach: continue thread #threadId# (ok if not suspended): #e.stacktrace#", true );
+					}
+				}
 
-		dap.drainEvents();
-	}
+				try {
+					waitForHttpComplete( 3000 );
+				} catch ( any e ) {
+					systemOutput( "afterEach: http drain timeout ignored: #e.stacktrace#", true );
+				}
 
-	// Round-trip: set bp via ide-prefix path, trigger real URL, stopped
-	// event must report source.path with the ide prefix (not the server path).
-	function testBreakpointRoundTripsThroughIdePrefix() {
-		systemOutput( "pathTransforms: idePath=#variables.idePath# serverPath=#variables.serverPath#", true );
+				dap.drainEvents();
+			} );
 
-		triggerArtifact( variables.targetRelative );
-		waitForHttpComplete();
+			// Round-trip: set bp via ide-prefix path, trigger real URL, stopped
+			// event must report source.path with the ide prefix (not the server path).
+			it( "round-trips a breakpoint set on an ide-prefix path", function() {
+				systemOutput( "pathTransforms: idePath=#variables.idePath# serverPath=#variables.serverPath#", true );
 
-		var bpResponse = dap.setBreakpoints( variables.idePath, [ variables.bpLine ] );
-		expect( bpResponse.body.breakpoints ).toHaveLength( 1 );
-		expect( bpResponse.body.breakpoints[ 1 ].verified ).toBeTrue(
-			"Breakpoint on ide-prefix path #variables.idePath# should resolve + verify. Response: #serializeJSON( bpResponse )#"
-		);
+				triggerArtifact( variables.targetRelative );
+				waitForHttpComplete();
 
-		triggerArtifact( variables.targetRelative );
-		sleep( 500 );
+				var bpResponse = dap.setBreakpoints( variables.idePath, [ variables.bpLine ] );
+				expect( bpResponse.body.breakpoints ).toHaveLength( 1 );
+				expect( bpResponse.body.breakpoints[ 1 ].verified ).toBeTrue(
+					"Breakpoint on ide-prefix path #variables.idePath# should resolve + verify. Response: #serializeJSON( bpResponse )#"
+				);
 
-		var stopped = dap.waitForEvent( "stopped", 3000 );
-		expect( stopped.body.reason ).toBe( "breakpoint" );
+				triggerArtifact( variables.targetRelative );
+				sleep( 500 );
 
-		var frame = getTopFrame( stopped.body.threadId );
-		systemOutput( "pathTransforms: top frame=#serializeJSON( frame )#", true );
+				var stopped = dap.waitForEvent( "stopped", 3000 );
+				expect( stopped.body.reason ).toBe( "breakpoint" );
 
-		expect( frame.source.path contains variables.idePrefix ).toBeTrue(
-			"Stopped event source.path should contain ide prefix '#variables.idePrefix#', got: #frame.source.path#"
-		);
-		expect( frame.source.path contains variables.serverPath ).toBeFalse(
-			"Server-side path should have been rewritten out. Got: #frame.source.path#"
-		);
+				var frame = getTopFrame( stopped.body.threadId );
+				systemOutput( "pathTransforms: top frame=#serializeJSON( frame )#", true );
 
-		cleanupThread( stopped.body.threadId );
-	}
+				expect( frame.source.path contains variables.idePrefix ).toBeTrue(
+					"Stopped event source.path should contain ide prefix '#variables.idePrefix#', got: #frame.source.path#"
+				);
+				expect( frame.source.path contains variables.serverPath ).toBeFalse(
+					"Server-side path should have been rewritten out. Got: #frame.source.path#"
+				);
 
-	// Unmapped paths pass through setBreakpoints unchanged. We use a fake
-	// prefix not in the transform list; the server treats it as a literal
-	// path, fails to find the file, and reports verified:false.
-	function testUnmappedPathPassesThrough() {
-		var fakePath = "/totally/unmapped/" & variables.targetRelative;
+				cleanupThread( stopped.body.threadId );
+			} );
 
-		var bpResponse = dap.setBreakpoints( fakePath, [ variables.bpLine ] );
-		expect( bpResponse.body.breakpoints ).toHaveLength( 1 );
-		expect( bpResponse.body.breakpoints[ 1 ].verified ).toBeFalse(
-			"Unmapped path should not resolve to any real file. Response: #serializeJSON( bpResponse )#"
-		);
+			// Unmapped paths pass through setBreakpoints unchanged. We use a fake
+			// prefix not in the transform list; the server treats it as a literal
+			// path, fails to find the file, and reports verified:false.
+			//
+			// setBreakpoints response doesn't echo source.path back (see DapServer
+			// map_cfBreakpoint_to_lsp4jBreakpoint — only id/line/verified), so we
+			// can't assert "path was not transformed" directly. Positive control
+			// instead: the same relative file under the REAL ide prefix verifies
+			// successfully on the same test call. That proves the only reason the
+			// fake-prefix call fails is the missing transform entry, not a path-
+			// resolution problem with the target file itself.
+			it( "leaves an unmapped path unchanged (positive control proves the file exists)", function() {
+				var fakePath = "/totally/unmapped/" & variables.targetRelative;
 
-		// cleanup
-		dap.setBreakpoints( fakePath, [] );
+				triggerArtifact( variables.targetRelative );
+				waitForHttpComplete();
+
+				// Negative: fake prefix — no transform, file not found under literal path
+				var unmappedResponse = dap.setBreakpoints( fakePath, [ variables.bpLine ] );
+				expect( unmappedResponse.body.breakpoints ).toHaveLength( 1 );
+				expect( unmappedResponse.body.breakpoints[ 1 ].verified ).toBeFalse(
+					"Unmapped path should not resolve. Response: #serializeJSON( unmappedResponse )#"
+				);
+
+				// Positive control: same relative file, real ide prefix — MUST verify.
+				// If this also returns false, something other than the missing transform
+				// is wrong and the negative assertion above was meaningless.
+				var mappedResponse = dap.setBreakpoints( variables.idePath, [ variables.bpLine ] );
+				expect( mappedResponse.body.breakpoints[ 1 ].verified ).toBeTrue(
+					"Positive control: same file under real prefix #variables.idePrefix# should verify. Response: #serializeJSON( mappedResponse )#"
+				);
+
+				// cleanup both paths
+				dap.setBreakpoints( fakePath, [] );
+				dap.setBreakpoints( variables.idePath, [] );
+			} );
+
+		} );
 	}
 }

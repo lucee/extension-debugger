@@ -23,13 +23,6 @@ component {
 	variables.pendingResponses = {};
 	variables.debug = false;
 	variables.knownBpPaths = {};
-	// Thread IDs the debuggee reported as suspended via `stopped` events,
-	// minus any the test body already resumed via continueThread. Used from
-	// afterEach to resume ONLY threads the agent genuinely suspended —
-	// iterating dap.threads() and continuing all of them over-resumes
-	// Tomcat worker threads and poisons JDWP suspend counters, which is
-	// what breaks downstream tests (see hang-regression-triage.md).
-	variables.suspendedThreadIds = {};
 
 	public function init( boolean debug = false ) {
 		variables.debug = arguments.debug;
@@ -217,16 +210,8 @@ component {
 		var response = sendRequest( "continue", {
 			"threadId": arguments.threadId
 		} );
-		variables.suspendedThreadIds.delete( arguments.threadId );
 		systemOutput( "continueThread: response=#serializeJSON( response )#", true );
 		return response;
-	}
-
-	// Returns the thread IDs the debuggee reported as suspended but which
-	// haven't been resumed via continueThread yet. afterEach should iterate
-	// this, not dap.threads() — see the variable declaration comment.
-	public array function getSuspendedThreadIds() {
-		return structKeyArray( variables.suspendedThreadIds );
 	}
 
 	public struct function stepOver( required numeric threadId ) {
@@ -472,9 +457,6 @@ component {
 				break;
 			case "event":
 				variables.eventQueue.append( arguments.message );
-				if ( arguments.message.event == "stopped" && structKeyExists( arguments.message.body, "threadId" ) ) {
-					variables.suspendedThreadIds[ arguments.message.body.threadId ] = true;
-				}
 				break;
 			default:
 				debugLog( "Unknown message type: #arguments.message.type#" );

@@ -333,7 +333,12 @@ jobs:
           done
           # Verify artifact is accessible - fail fast if not
           echo "Testing artifact access..."
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8888/test/cfml/artifacts/breakpoint-target.cfm)
+          # Dedicated readiness artifact — MUST NOT be a test target, or CI
+          # pre-compiles the target's $cf class and breaks agent-mode tests
+          # that assert verified:false on an uncompiled template. See
+          # test/cfml/artifacts/_readiness.cfm and
+          # test/cfml/BreakpointsTest.testSetBreakpointReturnsVerified.
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8888/test/cfml/artifacts/_readiness.cfm)
           echo "Artifact HTTP status: $STATUS"
           if [ "$STATUS" != "200" ]; then
             echo "ERROR: Artifact not accessible!"
@@ -535,7 +540,12 @@ jobs:
             sleep 1
           done
           echo "Testing artifact access..."
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8888/test/cfml/artifacts/breakpoint-target.cfm)
+          # Dedicated readiness artifact — MUST NOT be a test target, or CI
+          # pre-compiles the target's $cf class and breaks agent-mode tests
+          # that assert verified:false on an uncompiled template. See
+          # test/cfml/artifacts/_readiness.cfm and
+          # test/cfml/BreakpointsTest.testSetBreakpointReturnsVerified.
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8888/test/cfml/artifacts/_readiness.cfm)
           echo "Artifact HTTP status: $STATUS"
           if [ "$STATUS" != "200" ]; then
             echo "ERROR: Artifact not accessible!"

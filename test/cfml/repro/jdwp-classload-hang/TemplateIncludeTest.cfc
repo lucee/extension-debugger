@@ -1,13 +1,25 @@
 /**
- * Tests for breakpoints inside a template reached via cfinclude from inside
- * a UDF body. Covers lifecycle methods (onRequest, onRequestStart, onError)
- * and a plain UDF — all share the same root cause in Lucee core's
- * DebuggerExecutionLog: cfinclude updates the currently-executing
- * PageSource but does not push a debugger frame, so while a UDF is on
- * the stack the frame's file wins and breakpoints on the included file
- * never match.
+ * REPRODUCTION — do NOT add to default CI. Label-gated as `reproOnly`
+ * so the standard `testLabels=dap` runner skips this file.
+ *
+ * Reproduces the JDWP class-load hang documented in
+ * `../../../../../../../lucee-projects/runtime/classload-hang-summary.md`.
+ * Run via: `set testLabels=reproOnly` then test.bat.
+ *
+ * This is a frozen snapshot of the BDD lifecycle pattern that fires
+ * 5+ concurrent fire-and-forget `triggerArtifact` calls against the
+ * same unloaded `$cf` class, which amplifies JDK-8227269 under the
+ * Lucee `PageSourceImpl` monitor-hold into a 20-30 s hang.
+ *
+ * Original description: breakpoints inside a template reached via
+ * cfinclude from inside a UDF body. Covers lifecycle methods
+ * (onRequest, onRequestStart, onError) and a plain UDF — all share
+ * the same root cause in Lucee core's DebuggerExecutionLog: cfinclude
+ * updates the currently-executing PageSource but does not push a
+ * debugger frame, so while a UDF is on the stack the frame's file
+ * wins and breakpoints on the included file never match.
  */
-component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
+component extends="org.lucee.cfml.test.LuceeTestCase" labels="reproOnly" {
 
 	include "DapTestCase.cfm";
 
@@ -48,11 +60,12 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 					clearBreakpoints( path );
 				}
 
-				for ( var threadId in dap.getSuspendedThreadIds() ) {
+				var threadList = dap.threads();
+				for ( var t in threadList.body.threads ) {
 					try {
-						dap.continueThread( threadId );
+						dap.continueThread( t.id );
 					} catch ( any e ) {
-						systemOutput( "afterEach: continue thread #threadId# (ok if not suspended): #e.stacktrace#", true );
+						systemOutput( "afterEach: continue thread #t.id# (ok if not suspended): #e.stacktrace#", true );
 					}
 				}
 

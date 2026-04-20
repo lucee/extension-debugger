@@ -41,23 +41,49 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 	// ========== Basic Breakpoints ==========
 
 	function testSetBreakpointReturnsVerified() {
-		var response = dap.setBreakpoints( variables.targetFile, [ lines.conditionalFunctionStart ] );
+		// Use the dedicated never-triggered target so agent-mode returns the
+		// uncompiled-class placeholder regardless of test execution order.
+		// See bp-placeholder-target.cfm header for why.
+		var coldFile = getArtifactPath( "bp-placeholder-target.cfm" );
+		var coldLine = 19;
+		var response = dap.setBreakpoints( coldFile, [ coldLine ] );
 
 		expect( response.body ).toHaveKey( "breakpoints" );
 		expect( response.body.breakpoints ).toHaveLength( 1 );
-		expect( response.body.breakpoints[ 1 ].verified ).toBeTrue( "Breakpoint should be verified" );
+
+		var bp = response.body.breakpoints[ 1 ];
+		expect( bp ).toHaveKey( "id", "Breakpoint must carry an id so the IDE can correlate later `breakpoint` changed events" );
+		expect( bp.line ).toBe( coldLine );
+
+		if ( isNativeMode() ) {
+			expect( bp.verified ).toBeTrue( "Native: bp verifies synchronously" );
+		} else {
+			// Agent mode: setBreakpoints on an uncompiled template returns a
+			// placeholder (verified:false + id). Matches real IDE usage where
+			// a user sets a bp before hitting the page.
+			//
+			// The verified:false → verified:true flip (via `breakpoint` changed
+			// event after compile) is owned end-to-end by
+			// DelayedVerifyTest.testPendingBreakpointVerifiesAfterFirstCompile.
+			expect( bp.verified ).toBeFalse( "Agent: bp is placeholder until class compiles" );
+		}
 	}
 
 	function testSetMultipleBreakpoints() {
-		var response = dap.setBreakpoints( variables.targetFile, [
-			lines.conditionalFunctionStart,
-			lines.ifBlockBody,
-			lines.writeOutput
-		] );
+		// Uses the dedicated cold target — see testSetBreakpointReturnsVerified
+		// for rationale. Lines don't need to correspond to real executable
+		// lines in the file; agent mode's placeholder doesn't validate line
+		// against an uncompiled class, native mode's breakpointLocations
+		// validation runs against a different target in a different test.
+		var coldFile = getArtifactPath( "bp-placeholder-target.cfm" );
+		var response = dap.setBreakpoints( coldFile, [ 19, 20, 21 ] );
 
 		expect( response.body.breakpoints ).toHaveLength( 3 );
+		var expectedVerified = isNativeMode();
+		var modeMsg = isNativeMode() ? "Native: bp verifies synchronously" : "Agent: bp is placeholder until class compiles";
 		for ( var bp in response.body.breakpoints ) {
-			expect( bp.verified ).toBeTrue( "All breakpoints should be verified" );
+			expect( bp ).toHaveKey( "id", "Every breakpoint must carry an id" );
+			expect( bp.verified ).toBe( expectedVerified, modeMsg );
 		}
 	}
 
@@ -68,7 +94,10 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		systemOutput( "testBreakpointHits: response=#serializeJSON( bpResponse )#", true );
 
 		expect( bpResponse.body.breakpoints ).toHaveLength( 1, "Should have 1 breakpoint" );
-		expect( bpResponse.body.breakpoints[ 1 ].verified ).toBeTrue( "Breakpoint should be verified" );
+		// Don't assert verified here — native returns true, agent returns a
+		// placeholder that flips via the `breakpoint` changed event. The
+		// real assertion is the stopped event below; if the bp wasn't
+		// bound by the time execution hit the line, the event wouldn't fire.
 
 		triggerArtifact( "breakpoint-target.cfm" );
 		sleep( 500 );
