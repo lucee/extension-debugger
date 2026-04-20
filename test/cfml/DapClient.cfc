@@ -164,6 +164,24 @@ component {
 		} );
 	}
 
+	public struct function dump( required numeric variablesReference ) {
+		return sendRequest( "dump", {
+			"variablesReference": arguments.variablesReference
+		} );
+	}
+
+	public struct function dumpAsJSON( required numeric variablesReference ) {
+		return sendRequest( "dumpAsJSON", {
+			"variablesReference": arguments.variablesReference
+		} );
+	}
+
+	public struct function getMetadata( required numeric variablesReference ) {
+		return sendRequest( "getMetadata", {
+			"variablesReference": arguments.variablesReference
+		} );
+	}
+
 	public struct function setVariable( required numeric variablesReference, required string name, required string value ) {
 		return sendRequest( "setVariable", {
 			"variablesReference": arguments.variablesReference,

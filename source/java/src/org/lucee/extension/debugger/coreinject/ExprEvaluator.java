@@ -10,8 +10,6 @@ import lucee.runtime.PageContext;
 import org.lucee.extension.debugger.Either;
 import org.lucee.extension.debugger.coreinject.frame.Frame;
 
-import static org.lucee.extension.debugger.coreinject.Utils.terminate;
-
 import static lucee.loader.engine.CFMLEngine.DIALECT_CFML;
 
 class ExprEvaluator {
@@ -138,7 +136,9 @@ class ExprEvaluator {
                 return Optional.empty();
             }
             catch (Throwable e) {
-                return terminate(e);
+                System.err.println("[luceedebug] Lucee5Evaluator.maybeGet: unexpected failure detecting Renderer.tag signature - Lucee 5 evaluator will be unavailable");
+                e.printStackTrace();
+                return Optional.empty();
             }
         }
     }
@@ -176,7 +176,9 @@ class ExprEvaluator {
                 return Optional.empty();
             }
             catch (Throwable e) {
-                return terminate(e);
+                System.err.println("[luceedebug] Lucee6Evaluator.maybeGet: unexpected failure detecting Renderer.tag signature - Lucee 6+ evaluator will be unavailable");
+                e.printStackTrace();
+                return Optional.empty();
             }
         }
     }

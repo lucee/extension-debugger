@@ -218,7 +218,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		var arrayVars = arrayResponse.body.variables;
 
 		// Should have indexed elements
-		expect( arrayVars.len() ).toBeGTE( 5, "Array should have at least 5 elements" );
+		expect( arrayVars.len() ).toBeGTE( 5, "Array should have at least 5 elements, got #arrayVars.len()#: #serializeJSON( arrayVars )#" );
 
 		// Check first few elements
 		var arrayMap = {};

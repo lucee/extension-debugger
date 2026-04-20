@@ -43,13 +43,13 @@ public class DebugManager implements IDebugManager {
         // Using the "core loader" (which is used to load, amongst other things, PageContextImpl) gives us
         // same-classloader-visibility (term for that?) to PageContextImpl, so we can ask it for detailed runtime info.
         if (GlobalIDebugManagerHolder.luceeCoreLoader == null) {
-            System.out.println("[luceedebug] fatal - expected org.lucee.extension.debugger.coreinject.DebugManager to be loaded with the Lucee core loader, but the Lucee core loader hasn't been loaded yet.");
-            System.exit(1);
+            System.out.println("[luceedebug] error - expected org.lucee.extension.debugger.coreinject.DebugManager to be loaded with the Lucee core loader, but the Lucee core loader hasn't been loaded yet.");
+            throw new IllegalStateException("[luceedebug] DebugManager must be loaded with the Lucee core loader, but the Lucee core loader hasn't been seen yet.");
         }
         else if (GlobalIDebugManagerHolder.luceeCoreLoader != this.getClass().getClassLoader()) {
-            System.out.println("[luceedebug] fatal - expected org.lucee.extension.debugger.coreinject.DebugManager to be loaded with the Lucee core loader, but it is being loaded with classloader='" + this.getClass().getClassLoader() + "'.");
+            System.out.println("[luceedebug] error - expected org.lucee.extension.debugger.coreinject.DebugManager to be loaded with the Lucee core loader, but it is being loaded with classloader='" + this.getClass().getClassLoader() + "'.");
             System.out.println("[luceedebug]         lucee coreLoader has been seen, and is " + GlobalIDebugManagerHolder.luceeCoreLoader);
-            System.exit(1);
+            throw new IllegalStateException("[luceedebug] DebugManager loaded with wrong classloader: " + this.getClass().getClassLoader() + " (expected: " + GlobalIDebugManagerHolder.luceeCoreLoader + ")");
         }
         else {
             // ok, no problem; nothing to do.
@@ -69,7 +69,7 @@ public class DebugManager implements IDebugManager {
         VirtualMachine vm = jdwpSelfConnect(jdwpHost, jdwpPort);
         LuceeVm luceeVm = new LuceeVm(config, vm);
 
-        new Thread(() -> {
+        var dapThread = new Thread(() -> {
             System.out.println("[luceedebug] jdwp self connect OK");
             try {
                 DapServer.createForSocket(luceeVm, config, debugHost, debugPort);
@@ -77,7 +77,12 @@ public class DebugManager implements IDebugManager {
                 System.out.println("[luceedebug] DAP server thread failed: " + t.getMessage());
                 t.printStackTrace();
             }
-        }, threadName).start();
+        }, threadName);
+        // Daemon so LUCEE_ENABLE_WARMUP can exit the JVM cleanly after Lucee's bundle
+        // compile - a non-daemon thread parked on ServerSocket.accept() would block exit.
+        // During a real debug session Tomcat's own non-daemon threads keep the JVM alive.
+        dapThread.setDaemon(true);
+        dapThread.start();
     }
 
     static private AttachingConnector getConnector() {
@@ -103,9 +108,8 @@ public class DebugManager implements IDebugManager {
                 return c;
             }
         }
-        System.out.println("no socket attaching connector?");
-        System.exit(1);
-        return null;
+        System.out.println("[luceedebug] no socket attaching connector found - agent mode cannot debug.");
+        throw new IllegalStateException("[luceedebug] no SocketAttach JDI connector found - JDK required for agent mode debugging.");
     }
 
     static private VirtualMachine jdwpSelfConnect(String host, int port) {
@@ -118,8 +122,7 @@ public class DebugManager implements IDebugManager {
         }
         catch (Throwable e) {
             e.printStackTrace();
-            System.exit(1);
-            return null;
+            throw new RuntimeException("[luceedebug] JDWP self-connect failed (host=" + host + ", port=" + port + ")", e);
         }
     }
 
@@ -127,12 +130,9 @@ public class DebugManager implements IDebugManager {
         return "<!DOCTYPE html><html><body>" + s + "</body></html>";
     }
 
-    // we only need to know the thread, so we can get the pagecontext, so we can get Config and ServletConfig,
-    // which are required to generate a fresh page context, which we want so we have a fresh state and especially an empty output buffer.
-    // Are Config and ServletConfig globally available? Pulling those values from some global context would be much less kludgy.
-    // We need to know which thread is suspended, but caller doesn't have that info, just a variableID.
-    // Caller does have "all the suspended threads", but not all of them may have an associated page context.
-    // So we can iterate until we find one with an associated page context
+    // We need a PageContext to create a fresh ephemeral one with its own output buffer.
+    // The caller only has a variablesReference, so we iterate suspendedThreads and pick
+    // the first one that has an associated PageContext.
     synchronized public String doDump(ArrayList<Thread> suspendedThreads, int variableID) {
         final var pageContext = maybeNull_findPageContext(suspendedThreads);
         if (pageContext == null) {
@@ -196,32 +196,67 @@ public class DebugManager implements IDebugManager {
             this.outStream = outStream;
         }
 
-        // is there a way to conjure up a new PageContext without having some other page context?
+        // Create a fresh PageContext piggy-backing off another one's ConfigWeb.
+        //
+        // Uses ThreadUtil.createPageContext via the loader's ClassUtil. This avoids
+        // calling pc.getServletConfig() entirely - that method's return type flipped
+        // from javax to jakarta between Lucee 6 and 7, and since this agent jar is
+        // compiled against jakarta, a direct call throws NoSuchMethodError on 6.x.
+        // ConfigWeb is servlet-API-agnostic so one agent jar works on both runtimes.
         public static PageContextAndOutputStream ephemeralPageContextFromOther(PageContext pc) throws Exception {
             final var outputStream = new ByteArrayOutputStream();
-            PageContext freshEphemeralPageContext = lucee.runtime.util.PageContextUtil.getPageContext(
-                /*Config config*/ pc.getConfig(),
-                /*ServletConfig servletConfig*/ pc.getServletConfig(),
-                /*File contextRoot*/ new File("."),
-                /*String host*/ "",
-                /*String scriptName*/ "",
-                /*String queryString*/ "",
-                /*Cookie[] cookies*/ null,
-                /*Map<String, Object> headers*/ new HashMap<>(),
-                /*Map<String, String> parameters*/ new HashMap<>(),
-                /*Map<String, Object> attributes*/ new HashMap<>(),
-                /*OutputStream os*/ outputStream,
-                /*boolean register*/ false,
-                /*long timeout*/ 99999, // seconds?
-                /*boolean ignoreScopes*/ true
+
+            lucee.loader.engine.CFMLEngine engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
+            lucee.runtime.util.ClassUtil classUtil = engine.getClassUtil();
+
+            Class<?> threadUtilClass = classUtil.loadClass("lucee.runtime.thread.ThreadUtil");
+            Object emptyCookies = getEmptyCookieArray(classUtil);
+
+            PageContext freshEphemeralPageContext = (PageContext) classUtil.callStaticMethod(
+                threadUtilClass,
+                "createPageContext",
+                new Object[] {
+                    pc.getConfig(),    // ConfigWeb
+                    outputStream,      // OutputStream
+                    "",                // serverName
+                    "",                // requestURI
+                    "",                // queryString
+                    emptyCookies,      // Cookie[] (jakarta or javax per runtime)
+                    null,              // Pair[] headers
+                    null,              // byte[] body
+                    null,              // Pair[] parameters
+                    null,              // Struct attributes
+                    false,             // register (caller handles ThreadLocalPageContext.register)
+                    99999L             // timeout
+                }
             );
+
             return new PageContextAndOutputStream(freshEphemeralPageContext, outputStream);
+        }
+
+        private static Object getEmptyCookieArray(lucee.runtime.util.ClassUtil classUtil) throws Exception {
+            try {
+                // jakarta first (Lucee 7+)
+                Class<?> cookieClass = classUtil.loadClass("jakarta.servlet.http.Cookie");
+                return java.lang.reflect.Array.newInstance(cookieClass, 0);
+            }
+            catch (Exception e) {
+                // javax fallback (Lucee 5/6)
+                Class<?> cookieClass = classUtil.loadClass("javax.servlet.http.Cookie");
+                return java.lang.reflect.Array.newInstance(cookieClass, 0);
+            }
         }
     }
 
     // this is "single threaded" for now, only a single dumpable thing is tracked at once,
     // pushing another dump overwrites the old dump.
     synchronized private String doDump(PageContext pageContext, Object someDumpable) {
+        // Scope references from DAP arrive wrapped in MarkerTrait.Scope; unwrap so writeDump
+        // iterates the scope contents, not the wrapper's Java reflection metadata.
+        // (Native mode does the same in NativeLuceeVm.doDumpNative.)
+        final Object dumpable = (someDumpable instanceof CfValueDebuggerBridge.MarkerTrait.Scope)
+            ? ((CfValueDebuggerBridge.MarkerTrait.Scope) someDumpable).scopelike
+            : someDumpable;
         final var result = new Object(){ String value = "if this text is present, something went wrong when calling writeDump(...)"; };
         final var thread = new Thread(() -> {
             try {
@@ -230,15 +265,14 @@ public class DebugManager implements IDebugManager {
                 final var outputStream = ephemeralContext.outStream;
 
                 lucee.runtime.engine.ThreadLocalPageContext.register(freshEphemeralPageContext);
-                
+
                 lucee.runtime.functions.system.CFFunction.call(
                     freshEphemeralPageContext, new Object[]{
                         lucee.runtime.type.FunctionValueImpl.newInstance(lucee.runtime.type.util.KeyConstants.___filename, "writeDump.cfm"),
                         lucee.runtime.type.FunctionValueImpl.newInstance(lucee.runtime.type.util.KeyConstants.___name, "writeDump"),
                         lucee.runtime.type.FunctionValueImpl.newInstance(lucee.runtime.type.util.KeyConstants.___isweb, Boolean.FALSE),
                         lucee.runtime.type.FunctionValueImpl.newInstance(lucee.runtime.type.util.KeyConstants.___mapping, "/mapping-function"),
-                        someDumpable
-                        //LiteralArray.call(var1, new Object[]{LiteralValue.toNumber(var1, 0L)})
+                        dumpable
                     });
 
                 freshEphemeralPageContext.flush();
@@ -254,8 +288,8 @@ public class DebugManager implements IDebugManager {
                 lucee.runtime.engine.ThreadLocalPageContext.release();
             }
             catch (Throwable e) {
+                // Log only - never kill the host JVM. The preset result.value fallback stands.
                 e.printStackTrace();
-                System.exit(1);
             }
         });
 
@@ -267,19 +301,17 @@ public class DebugManager implements IDebugManager {
             thread.join();
         }
         catch (Throwable e) {
-            if (thread.isAlive()) {
-                e.printStackTrace();
-                System.exit(1);
-            }
-            else {
-                // thread is joined, discard exception
-            }
+            e.printStackTrace();
         }
 
         return result.value;
     }
 
     synchronized private String doDumpAsJSON(PageContext pageContext, Object someDumpable) {
+        // Unwrap scope wrapper (same reason as doDump).
+        final Object dumpable = (someDumpable instanceof CfValueDebuggerBridge.MarkerTrait.Scope)
+            ? ((CfValueDebuggerBridge.MarkerTrait.Scope) someDumpable).scopelike
+            : someDumpable;
         final var result = new Object(){ String value = "\"Something went wrong when calling serializeJSON(...)\""; };
         final var thread = new Thread(() -> {
             try {
@@ -288,10 +320,10 @@ public class DebugManager implements IDebugManager {
                 final var outputStream = ephemeralContext.outStream;
 
                 lucee.runtime.engine.ThreadLocalPageContext.register(freshEphemeralPageContext);
-                
+
                 result.value = (String)lucee.runtime.functions.conversion.SerializeJSON.call(
                     /*PageContext pc*/ freshEphemeralPageContext,
-                    /*Object var*/ someDumpable,
+                    /*Object var*/ dumpable,
                     /*Object queryFormat*/"struct"
                 );
 
@@ -305,8 +337,8 @@ public class DebugManager implements IDebugManager {
                 lucee.runtime.engine.ThreadLocalPageContext.release();
             }
             catch (Throwable e) {
+                // Log only - never kill the host JVM. The preset result.value fallback stands.
                 e.printStackTrace();
-                System.exit(1);
             }
         });
 
@@ -318,13 +350,7 @@ public class DebugManager implements IDebugManager {
             thread.join();
         }
         catch (Throwable e) {
-            if (thread.isAlive()) {
-                e.printStackTrace();
-                System.exit(1);
-            }
-            else {
-                // thread is joined, discard exception
-            }
+            e.printStackTrace();
         }
 
         return result.value;
@@ -558,8 +584,7 @@ public class DebugManager implements IDebugManager {
     public void registerStepRequest(Thread thread, int type) {
         DebugFrame frame = getTopmostFrame(thread);
         if (frame == null) {
-            System.out.println("[luceedebug] registerStepRequest found no frames");
-            System.exit(1);
+            System.err.println("[luceedebug] registerStepRequest: no frames for thread '" + thread + "' (type=" + type + ") - step request ignored");
             return;
         }
 
@@ -574,8 +599,7 @@ public class DebugManager implements IDebugManager {
                 return;
             }
             default: {
-                System.out.println("[luceedebug] bad step type");
-                System.exit(1);
+                System.err.println("[luceedebug] registerStepRequest: unknown step type=" + type + " for thread '" + thread + "' - step request ignored");
                 return;
             }
         }
@@ -780,8 +804,8 @@ public class DebugManager implements IDebugManager {
         DebugFrame poppedFrame = null;
 
         if (maybeNull_frameListing.isEmpty()) {
-            System.out.println("Popping from an empty stack?");
-            System.exit(1);
+            System.err.println("[luceedebug] popFrame: frame stack for thread '" + currentThread + "' is empty - ignoring pop");
+            return;
         }
         else {
             poppedFrame = maybeNull_frameListing.remove(maybeNull_frameListing.size() - 1);

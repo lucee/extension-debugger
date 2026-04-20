@@ -230,7 +230,7 @@ public class Agent {
         if (!new File(parsedArgs.jarPath).exists()) {
             System.err.println("[luceedebug] couldn't find agent/instrumentation jar to add to bootstrap classloader");
             System.err.println("[luceedebug] (target jarpath was '" + parsedArgs.jarPath + "', maybe it was a relative path, rather than absolute?");
-            System.exit(1);
+            throw new IllegalStateException("[luceedebug] agent/instrumentation jar not found at '" + parsedArgs.jarPath + "'");
         }
 
         /**
@@ -280,8 +280,7 @@ public class Agent {
                     }
                     catch (Throwable e) {
                         e.printStackTrace();
-                        System.exit(1);
-                        return null;
+                        throw new RuntimeException("[luceedebug] failed reading class from agent jar: " + jarEntry.getName(), e);
                     }
                 })
                 .sorted(CoreInjectionLinearization.comparator())
@@ -293,7 +292,7 @@ public class Agent {
         }
         catch (Throwable e) {
             e.printStackTrace();
-            System.exit(1);
+            throw new RuntimeException("[luceedebug] premain transformer setup failed", e);
         }
 
         System.out.println("[luceedebug] agent premain complete");

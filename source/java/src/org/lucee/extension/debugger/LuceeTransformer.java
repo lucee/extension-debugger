@@ -87,16 +87,17 @@ public class LuceeTransformer implements ClassFileTransformer {
                         GlobalIDebugManagerHolder.debugManager.spawnWorker(config, jdwpHost, jdwpPort, debugHost, debugPort);
                     }
                     catch (Throwable e) {
+                        System.err.println("[luceedebug] failed to load DebugManager and spawn JDWP worker from PageContextImpl transform - debugging will be unavailable");
                         e.printStackTrace();
-                        System.exit(1);
+                        // don't exit; class injections already happened, let Lucee continue
                     }
-                    
+
                     return classfileBuffer;
                 }
                 catch (Throwable e) {
+                    System.err.println("[luceedebug] PageContextImpl transform failed - class will load un-instrumented, debugging will be unavailable");
                     e.printStackTrace();
-                    System.exit(1);
-                    return null;
+                    return classfileBuffer;
                 }
             }
             else if (
@@ -106,8 +107,8 @@ public class LuceeTransformer implements ClassFileTransformer {
             ) {
                 // System.out.println("[luceedebug] Instrumenting " + className);
                 if (GlobalIDebugManagerHolder.luceeCoreLoader == null) {
-                    System.out.println("Got class " + className + " before receiving PageContextImpl, debugging will fail.");
-                    System.exit(1);
+                    System.err.println("[luceedebug] got class " + className + " before receiving PageContextImpl - loading un-instrumented, breakpoints in this class won't fire");
+                    return classfileBuffer;
                 }
 
                 return instrumentCfmOrCfc(classfileBuffer, classReader, className);
@@ -117,9 +118,9 @@ public class LuceeTransformer implements ClassFileTransformer {
             }
         }
         catch (Throwable e) {
+            System.err.println("[luceedebug] transform() failed for " + className + " - class will load un-instrumented");
             e.printStackTrace();
-            System.exit(1);
-            return null;
+            return classfileBuffer;
         }
     }
 
@@ -137,11 +138,9 @@ public class LuceeTransformer implements ClassFileTransformer {
             return classWriter.toByteArray();
         }
         catch (Throwable e) {
-            System.err.println("[luceedebug] exception during attempted classfile rewrite");
-            System.err.println(e.getMessage());
+            System.err.println("[luceedebug] PageContextImpl classfile rewrite failed - loading un-instrumented, debugging will be broken");
             e.printStackTrace();
-            System.exit(1);
-            return null;
+            return classfileBuffer;
         }
     }
 
@@ -157,11 +156,9 @@ public class LuceeTransformer implements ClassFileTransformer {
             return classWriter.toByteArray();
         }
         catch (Throwable e) {
-            System.err.println("[luceedebug] exception during attempted classfile rewrite");
-            System.err.println(e.getMessage());
+            System.err.println("[luceedebug] ClosureScope classfile rewrite failed - loading un-instrumented, closure variable inspection may be degraded");
             e.printStackTrace();
-            System.exit(1);
-            return null;
+            return classfileBuffer;
         }
     }
 
@@ -182,14 +179,12 @@ public class LuceeTransformer implements ClassFileTransformer {
             return classWriter.toByteArray();
         }
         catch (Throwable e) {
-            System.err.println("[luceedebug] exception during attempted classfile rewrite");
-            System.err.println(e.getMessage());
+            System.err.println("[luceedebug] ComponentImpl classfile rewrite failed - loading un-instrumented, CFC instance inspection may be degraded");
             e.printStackTrace();
-            System.exit(1);
-            return null;
+            return classfileBuffer;
         }
     }
-    
+
     private byte[] instrumentCfmOrCfc(final byte[] classfileBuffer, ClassReader reader, String className) {
         byte[] stepInstrumentedBuffer = classfileBuffer;
         var classWriter = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS) {
@@ -227,11 +222,9 @@ public class LuceeTransformer implements ClassFileTransformer {
             return classfileBuffer;
         }
         catch (Throwable e) {
-            System.err.println("[luceedebug] exception during attempted classfile rewrite");
-            System.err.println(e.getMessage());
+            System.err.println("[luceedebug] classfile rewrite failed for " + className + " - loading un-instrumented, breakpoints in this class won't fire");
             e.printStackTrace();
-            System.exit(1);
-            return null;
+            return classfileBuffer;
         }
     }
 

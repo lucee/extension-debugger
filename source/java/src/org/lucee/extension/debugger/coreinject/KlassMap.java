@@ -47,12 +47,10 @@ class KlassMap {
             return null;
         }
         catch (Throwable e) {
+            System.err.println("[luceedebug] maybeNull_tryBuildKlassMap: failed to build KlassMap for refType=" + refType + " - class will not be tracked, breakpoints in it won't bind");
             e.printStackTrace();
-            System.exit(1);
+            return null;
         }
-
-        // unreachable
-        return null;
     }
 
     @Override

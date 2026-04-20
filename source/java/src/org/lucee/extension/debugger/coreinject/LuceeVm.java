@@ -67,9 +67,7 @@ public class LuceeVm implements ILuceeVm {
             if (thread != null) {
                 return thread;
             }
-            System.out.println("[luceedebug] couldn't find thread with id '" + id + "'");
-            System.exit(1);
-            return null;
+            throw new RuntimeException("[luceedebug] getThreadByJdwpIdOrFail: no thread for JDWP id '" + id + "'");
         }
 
         public ThreadReference getThreadRefByThread(Thread thread) {
@@ -81,9 +79,7 @@ public class LuceeVm implements ILuceeVm {
             if (result != null) {
                 return result;
             }
-            System.out.println("[luceedebug] couldn't find thread reference for thread " + thread );
-            System.exit(1);
-            return null;
+            throw new RuntimeException("[luceedebug] getThreadRefByThreadOrFail: no JDWP ThreadReference for thread '" + thread + "'");
         }
 
         public ThreadReference getThreadRefByJdwpIdOrFail(JdwpThreadID jdwpID) {
@@ -215,7 +211,10 @@ public class LuceeVm implements ILuceeVm {
         }
 
         static void spawnThreadForJdwpToSuspend() {
-            new Thread(JdwpWorker::jdwp_stays_suspended_in_this_method_as_a_worker, "luceedebug-worker").start();
+            var workerThread = new Thread(JdwpWorker::jdwp_stays_suspended_in_this_method_as_a_worker, "luceedebug-worker");
+            // Daemon so this thread doesn't block JVM exit during LUCEE_ENABLE_WARMUP.
+            workerThread.setDaemon(true);
+            workerThread.start();
         }
 
         static ConcurrentHashMap<Long, Thread> threadBuffer_ = new ConcurrentHashMap<>();
@@ -287,8 +286,7 @@ public class LuceeVm implements ILuceeVm {
             bootClassTracking(pageRef.get(0));
         }
         else {
-            System.out.println("[luceedebug] Expected 0 or 1 ref for class with name 'lucee.runtime.Page', but got " + pageRef.size());
-            System.exit(1);
+            System.err.println("[luceedebug] Page class tracking init: expected 0 or 1 ref for 'lucee.runtime.Page', got " + pageRef.size() + " - skipping class tracking, breakpoints won't bind");
         }
     }
 
@@ -309,8 +307,7 @@ public class LuceeVm implements ILuceeVm {
         final String className = "org.lucee.extension.debugger.coreinject.LuceeVm$JdwpWorker";
         final var refs = vm_.classesByName(className);
         if (refs.size() != 1) {
-            System.out.println("Expected 1 ref for class " + className + " but got " + refs.size());
-            System.exit(1);
+            throw new RuntimeException("[luceedebug] bootThreadWorker: expected 1 ref for class '" + className + "' but got " + refs.size() + " - JDWP worker cannot boot, debugger will not function");
         }
 
         final var refType = refs.get(0);
@@ -327,14 +324,12 @@ public class LuceeVm implements ILuceeVm {
         }
 
         if (jdwp_stays_suspended_in_this_method_as_a_worker == null) {
-            System.out.println("Couldn't find helper method 'jdwp_stays_suspended_in_this_method_as_a_worker'");
-            System.exit(1);
-            return null;
+            System.out.println("[luceedebug] JDWP worker helper method 'jdwp_stays_suspended_in_this_method_as_a_worker' missing - debugger cannot boot.");
+            throw new IllegalStateException("[luceedebug] JDWP worker helper method 'jdwp_stays_suspended_in_this_method_as_a_worker' missing from JdwpWorker class.");
         }
         if (jdwp_getThread == null) {
-            System.out.println("Couldn't find helper method 'jdwp_getThread'");
-            System.exit(1);
-            return null;
+            System.out.println("[luceedebug] JDWP worker helper method 'jdwp_getThread' missing - debugger cannot boot.");
+            throw new IllegalStateException("[luceedebug] JDWP worker helper method 'jdwp_getThread' missing from JdwpWorker class.");
         }
 
         JDWP_WORKER_CLASS_ID = refType.classObject().uniqueID();
@@ -449,8 +444,9 @@ public class LuceeVm implements ILuceeVm {
                     throw new RuntimeException("unreachable");
                 }
                 catch (Throwable e) {
+                    System.err.println("[luceedebug] step handler (async) failed - step request abandoned");
                     e.printStackTrace();
-                    System.exit(1);
+                    // swallow; don't kill the JVM for a step-handler failure
                 }
             }, stepHandlerExecutor);
 
@@ -501,7 +497,7 @@ public class LuceeVm implements ILuceeVm {
     }
 
     private void initEventPump() {
-        new java.lang.Thread(() -> {
+        var pumpThread = new java.lang.Thread(() -> {
             try {
                 while (true) {
                     var eventSet = vm_.eventQueue().remove();
@@ -519,22 +515,24 @@ public class LuceeVm implements ILuceeVm {
                             handleBreakpointEvent((BreakpointEvent) event);
                         }
                         else {
-                            System.out.println("Unexpected jdwp event " + event);
-                            System.exit(1);
+                            System.err.println("[luceedebug] event pump: unexpected JDWP event type=" + event.getClass().getName() + " event=" + event + " - ignoring");
                         }
                     }
                 }
             }
             catch (InterruptedException e) {
-                // Maybe we want to handle this differently?
+                System.err.println("[luceedebug] event pump interrupted - debugger event delivery has stopped");
                 e.printStackTrace();
-                System.exit(1);
+                Thread.currentThread().interrupt();
             }
             catch (Throwable e) {
+                System.err.println("[luceedebug] event pump crashed - debugger event delivery has stopped");
                 e.printStackTrace();
-                System.exit(1);
             }
-        }).start();
+        });
+        // Daemon so vm_.eventQueue().remove() (blocks forever) can't prevent JVM exit.
+        pumpThread.setDaemon(true);
+        pumpThread.start();
     }
 
     private void initCurrentThreadListing() {
@@ -563,16 +561,16 @@ public class LuceeVm implements ILuceeVm {
         catch (ObjectCollectedException e) {
             if (JDWP_WORKER_THREADREF.isCollected()) {
                 // this should never be collected
-                System.out.println("[luceedebug] fatal: JDWP_WORKER_THREADREF is collected");
-                System.exit(1);
+                System.err.println("[luceedebug] trackThreadReference: JDWP_WORKER_THREADREF is collected (should be impossible) - thread tracking is broken, subsequent thread events may misbehave");
+                e.printStackTrace();
             }
             else {
                 // discard, can't track a thread that got collected
             }
         }
         catch (Throwable e) {
+            System.err.println("[luceedebug] trackThreadReference failed for threadRef=" + threadRef + " - thread will not be tracked");
             e.printStackTrace();
-            System.exit(1);
         }
     }
 
@@ -627,8 +625,8 @@ public class LuceeVm implements ILuceeVm {
             }
         }
         catch (Throwable e) {
+            System.err.println("[luceedebug] trackClassRef failed for refType=" + refType + " - class will not be tracked, breakpoints in it won't bind");
             e.printStackTrace();
-            System.exit(1);
         }
     }
 
@@ -1037,8 +1035,7 @@ public class LuceeVm implements ILuceeVm {
         var threadRef = threadMap_.getThreadRefByThreadOrFail(thread);
 
         if (threadRef.suspendCount() == 0) {
-            System.out.println("step in handler expected thread " + thread + " to already be suspended, but suspendCount was 0.");
-            System.exit(1);
+            System.err.println("[luceedebug] stepIn: thread '" + thread + "' was expected suspended but suspendCount=0 - step ignored");
             return;
         }
 
@@ -1058,8 +1055,7 @@ public class LuceeVm implements ILuceeVm {
         var threadRef = threadMap_.getThreadRefByThreadOrFail(thread);
         
         if (threadRef.suspendCount() == 0) {
-            System.out.println("step over handler expected thread " + thread + " to already be suspended, but suspendCount was 0.");
-            System.exit(1);
+            System.err.println("[luceedebug] stepOver: thread '" + thread + "' was expected suspended but suspendCount=0 - step ignored");
             return;
         }
 
@@ -1079,8 +1075,7 @@ public class LuceeVm implements ILuceeVm {
         var threadRef = threadMap_.getThreadRefByThreadOrFail(thread);
 
         if (threadRef.suspendCount() == 0) {
-            System.out.println("step out handler expected thread " + thread + " to already be suspended, but suspendCount was 0.");
-            System.exit(1);
+            System.err.println("[luceedebug] stepOut: thread '" + thread + "' was expected suspended but suspendCount=0 - step ignored");
             return;
         }
 
