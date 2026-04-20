@@ -324,14 +324,12 @@ public class LuceeVm implements ILuceeVm {
         }
 
         if (jdwp_stays_suspended_in_this_method_as_a_worker == null) {
-            System.out.println("Couldn't find helper method 'jdwp_stays_suspended_in_this_method_as_a_worker'");
-            System.exit(1);
-            return null;
+            System.out.println("[luceedebug] JDWP worker helper method 'jdwp_stays_suspended_in_this_method_as_a_worker' missing - debugger cannot boot.");
+            throw new IllegalStateException("[luceedebug] JDWP worker helper method 'jdwp_stays_suspended_in_this_method_as_a_worker' missing from JdwpWorker class.");
         }
         if (jdwp_getThread == null) {
-            System.out.println("Couldn't find helper method 'jdwp_getThread'");
-            System.exit(1);
-            return null;
+            System.out.println("[luceedebug] JDWP worker helper method 'jdwp_getThread' missing - debugger cannot boot.");
+            throw new IllegalStateException("[luceedebug] JDWP worker helper method 'jdwp_getThread' missing from JdwpWorker class.");
         }
 
         JDWP_WORKER_CLASS_ID = refType.classObject().uniqueID();

@@ -273,10 +273,9 @@ public class DapServer implements IDebugProtocolServer {
             return null;
         }
         catch (Throwable e) {
-            System.out.println("[luceedebug] DAP server fatal error: " + e.getClass().getName() + ": " + e.getMessage());
+            System.out.println("[luceedebug] DAP server error (continuing, accept loop will exit): " + e.getClass().getName() + ": " + e.getMessage());
             e.printStackTrace(System.out);
             e.printStackTrace();
-            System.exit(1);
             return null;
         }
         finally {

@@ -43,13 +43,13 @@ public class DebugManager implements IDebugManager {
         // Using the "core loader" (which is used to load, amongst other things, PageContextImpl) gives us
         // same-classloader-visibility (term for that?) to PageContextImpl, so we can ask it for detailed runtime info.
         if (GlobalIDebugManagerHolder.luceeCoreLoader == null) {
-            System.out.println("[luceedebug] fatal - expected org.lucee.extension.debugger.coreinject.DebugManager to be loaded with the Lucee core loader, but the Lucee core loader hasn't been loaded yet.");
-            System.exit(1);
+            System.out.println("[luceedebug] error - expected org.lucee.extension.debugger.coreinject.DebugManager to be loaded with the Lucee core loader, but the Lucee core loader hasn't been loaded yet.");
+            throw new IllegalStateException("[luceedebug] DebugManager must be loaded with the Lucee core loader, but the Lucee core loader hasn't been seen yet.");
         }
         else if (GlobalIDebugManagerHolder.luceeCoreLoader != this.getClass().getClassLoader()) {
-            System.out.println("[luceedebug] fatal - expected org.lucee.extension.debugger.coreinject.DebugManager to be loaded with the Lucee core loader, but it is being loaded with classloader='" + this.getClass().getClassLoader() + "'.");
+            System.out.println("[luceedebug] error - expected org.lucee.extension.debugger.coreinject.DebugManager to be loaded with the Lucee core loader, but it is being loaded with classloader='" + this.getClass().getClassLoader() + "'.");
             System.out.println("[luceedebug]         lucee coreLoader has been seen, and is " + GlobalIDebugManagerHolder.luceeCoreLoader);
-            System.exit(1);
+            throw new IllegalStateException("[luceedebug] DebugManager loaded with wrong classloader: " + this.getClass().getClassLoader() + " (expected: " + GlobalIDebugManagerHolder.luceeCoreLoader + ")");
         }
         else {
             // ok, no problem; nothing to do.
@@ -108,9 +108,8 @@ public class DebugManager implements IDebugManager {
                 return c;
             }
         }
-        System.out.println("no socket attaching connector?");
-        System.exit(1);
-        return null;
+        System.out.println("[luceedebug] no socket attaching connector found - agent mode cannot debug.");
+        throw new IllegalStateException("[luceedebug] no SocketAttach JDI connector found - JDK required for agent mode debugging.");
     }
 
     static private VirtualMachine jdwpSelfConnect(String host, int port) {
@@ -123,8 +122,7 @@ public class DebugManager implements IDebugManager {
         }
         catch (Throwable e) {
             e.printStackTrace();
-            System.exit(1);
-            return null;
+            throw new RuntimeException("[luceedebug] JDWP self-connect failed (host=" + host + ", port=" + port + ")", e);
         }
     }
 
@@ -253,6 +251,12 @@ public class DebugManager implements IDebugManager {
     // this is "single threaded" for now, only a single dumpable thing is tracked at once,
     // pushing another dump overwrites the old dump.
     synchronized private String doDump(PageContext pageContext, Object someDumpable) {
+        // Scope references from DAP arrive wrapped in MarkerTrait.Scope; unwrap so writeDump
+        // iterates the scope contents, not the wrapper's Java reflection metadata.
+        // (Native mode does the same in NativeLuceeVm.doDumpNative.)
+        final Object dumpable = (someDumpable instanceof CfValueDebuggerBridge.MarkerTrait.Scope)
+            ? ((CfValueDebuggerBridge.MarkerTrait.Scope) someDumpable).scopelike
+            : someDumpable;
         final var result = new Object(){ String value = "if this text is present, something went wrong when calling writeDump(...)"; };
         final var thread = new Thread(() -> {
             try {
@@ -261,14 +265,14 @@ public class DebugManager implements IDebugManager {
                 final var outputStream = ephemeralContext.outStream;
 
                 lucee.runtime.engine.ThreadLocalPageContext.register(freshEphemeralPageContext);
-                
+
                 lucee.runtime.functions.system.CFFunction.call(
                     freshEphemeralPageContext, new Object[]{
                         lucee.runtime.type.FunctionValueImpl.newInstance(lucee.runtime.type.util.KeyConstants.___filename, "writeDump.cfm"),
                         lucee.runtime.type.FunctionValueImpl.newInstance(lucee.runtime.type.util.KeyConstants.___name, "writeDump"),
                         lucee.runtime.type.FunctionValueImpl.newInstance(lucee.runtime.type.util.KeyConstants.___isweb, Boolean.FALSE),
                         lucee.runtime.type.FunctionValueImpl.newInstance(lucee.runtime.type.util.KeyConstants.___mapping, "/mapping-function"),
-                        someDumpable
+                        dumpable
                         //LiteralArray.call(var1, new Object[]{LiteralValue.toNumber(var1, 0L)})
                     });
 
@@ -305,6 +309,10 @@ public class DebugManager implements IDebugManager {
     }
 
     synchronized private String doDumpAsJSON(PageContext pageContext, Object someDumpable) {
+        // Unwrap scope wrapper (same reason as doDump).
+        final Object dumpable = (someDumpable instanceof CfValueDebuggerBridge.MarkerTrait.Scope)
+            ? ((CfValueDebuggerBridge.MarkerTrait.Scope) someDumpable).scopelike
+            : someDumpable;
         final var result = new Object(){ String value = "\"Something went wrong when calling serializeJSON(...)\""; };
         final var thread = new Thread(() -> {
             try {
@@ -313,10 +321,10 @@ public class DebugManager implements IDebugManager {
                 final var outputStream = ephemeralContext.outStream;
 
                 lucee.runtime.engine.ThreadLocalPageContext.register(freshEphemeralPageContext);
-                
+
                 result.value = (String)lucee.runtime.functions.conversion.SerializeJSON.call(
                     /*PageContext pc*/ freshEphemeralPageContext,
-                    /*Object var*/ someDumpable,
+                    /*Object var*/ dumpable,
                     /*Object queryFormat*/"struct"
                 );
 

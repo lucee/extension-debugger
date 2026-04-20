@@ -78,7 +78,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 		if ( isNativeMode() ) {
 			expect( parsed ).toBeTypeOf( "struct" );
-			expect( parsed.name ).toEndWith( "SampleComponent" );  // Lucee returns the fully-qualified name
+			expect( parsed.name ).toMatch( "\.SampleComponent$" );  // Lucee returns the fully-qualified name
 
 			// greet() function surfaces with correct signature.
 			var greetFns = parsed.functions.filter( ( fn ) => fn.name == "greet" );
