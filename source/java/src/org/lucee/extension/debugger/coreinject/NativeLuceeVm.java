@@ -8,6 +8,10 @@ import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 import lucee.runtime.PageContext;
+import lucee.runtime.dump.DumpData;
+import lucee.runtime.dump.DumpProperties;
+import lucee.runtime.dump.DumpUtil;
+import lucee.runtime.dump.DumpWriter;
 
 import org.lucee.extension.debugger.*;
 import org.lucee.extension.debugger.coreinject.frame.NativeDebugFrame;
@@ -519,8 +523,7 @@ public class NativeLuceeVm implements ILuceeVm {
 						lucee.runtime.ext.function.BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
 						result.value = (String) serializeJsonBif.invoke(pc, new Object[] { dumpable, "struct" });
 					} else {
-						// Use DumpUtil to get DumpData, then HTMLDumpWriter to render
-						result.value = wrapDumpInHtmlDoc(dumpObjectAsHtml(pc, cl, dumpable));
+						result.value = wrapDumpInHtmlDoc(dumpObjectAsHtml(pc, dumpable));
 					}
 				} finally {
 					releaseMethod.invoke(null);
@@ -544,31 +547,13 @@ public class NativeLuceeVm implements ILuceeVm {
 	}
 
 	/**
-	 * Dump an object to HTML string using Lucee's HTMLDumpWriter.
+	 * Dump an object to HTML string using the Lucee loader API.
+	 * Mirrors Lucee's own pattern, see ComponentPageImpl.java / InterfacePageImpl.java.
 	 */
-	private String dumpObjectAsHtml(PageContext pc, ClassLoader cl, Object obj) throws Exception {
-		// Use DumpUtil to get DumpData, then HTMLDumpWriter to render
-		Class<?> dumpUtilClass = cl.loadClass("lucee.runtime.dump.DumpUtil");
-		Class<?> dumpPropertiesClass = cl.loadClass("lucee.runtime.dump.DumpProperties");
-		Class<?> dumpDataClass = cl.loadClass("lucee.runtime.dump.DumpData");
-
-		// Get default dump properties - use DEFAULT singleton instance
-		java.lang.reflect.Field defaultField = dumpPropertiesClass.getField("DEFAULT");
-		Object dumpProps = defaultField.get(null);
-
-		// toDumpData(PageContext, Object, int maxlevel, DumpProperties)
-		java.lang.reflect.Method toDumpDataMethod = dumpUtilClass.getMethod("toDumpData",
-			PageContext.class, Object.class, int.class, dumpPropertiesClass);
-		Object dumpData = toDumpDataMethod.invoke(null, pc, obj, 9999, dumpProps);
-
-		// Create HTMLDumpWriter and render
-		Class<?> htmlDumpWriterClass = cl.loadClass("lucee.runtime.dump.HTMLDumpWriter");
-		Object htmlWriter = htmlDumpWriterClass.getConstructor().newInstance();
-
-		// DumpWriter.toString(PageContext, DumpData)
-		java.lang.reflect.Method toStringMethod = htmlDumpWriterClass.getMethod("toString",
-			PageContext.class, dumpDataClass);
-		return (String) toStringMethod.invoke(htmlWriter, pc, dumpData);
+	private String dumpObjectAsHtml(PageContext pc, Object obj) {
+		DumpData dumpData = DumpUtil.toDumpData(obj, pc, 9999, DumpProperties.DEFAULT);
+		DumpWriter writer = pc.getConfig().getDefaultDumpWriter(DumpWriter.DEFAULT_RICH);
+		return writer.toString(pc, dumpData, true);
 	}
 
 	private static String wrapDumpInHtmlDoc(String dumpHtml) {
