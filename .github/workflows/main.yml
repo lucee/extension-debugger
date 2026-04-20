@@ -38,7 +38,12 @@ jobs:
       lucee_branch: ${{ steps.set.outputs.lucee_branch }}
     steps:
       - id: set
-        run: echo "lucee_branch=LDEV-6274-debugger-cfinclude-udf" >> "$GITHUB_OUTPUT"
+        # LDEV-6274 core fix landed in Lucee 7.1.0.95 (commit 77f59551d).
+        # Extension now requires 7.1.0.96+ via luceeCoreVersion in pom.xml,
+        # so we no longer build Lucee from the patch branch — fall back to
+        # the published cdn release. Leave the build-lucee-71 job in place
+        # for future use against other pre-release core patches.
+        run: echo "lucee_branch=" >> "$GITHUB_OUTPUT"
 
   # Prime Maven cache by running script-runner once
   # This ensures the cache is populated for subsequent jobs
