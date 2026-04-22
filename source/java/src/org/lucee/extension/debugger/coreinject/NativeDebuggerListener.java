@@ -491,6 +491,19 @@ public class NativeDebuggerListener {
 	}
 
 	/**
+	 * Get a PageContext from any currently-suspended thread. Used by DAP-custom
+	 * requests (getApplicationSettings) that need a live request PC but don't
+	 * carry a threadId. Returns null if no thread is suspended.
+	 */
+	public static PageContext getAnySuspendedPageContext() {
+		for (WeakReference<PageContext> ref : nativelySuspendedThreads.values()) {
+			PageContext pc = ref.get();
+			if (pc != null) return pc;
+		}
+		return null;
+	}
+
+	/**
 	 * Get suspend location for a specific thread.
 	 * Used to create synthetic frame for top-level code.
 	 * @param javaThreadId The Java thread ID

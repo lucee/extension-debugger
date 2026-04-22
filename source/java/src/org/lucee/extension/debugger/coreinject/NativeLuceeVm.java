@@ -43,8 +43,12 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	private AtomicInteger breakpointID = new AtomicInteger();
 
-	// Cache of frame ID -> frame for scope/variable lookups
+	// Cache of frame ID -> frame for scope/variable lookups.
+	// Side map tracks which frame IDs belong to each suspended thread so we
+	// can evict them on resume — otherwise frameCache grows unbounded and
+	// cross-thread iterations hand back stale PCs from prior suspensions.
 	private final ConcurrentHashMap<Long, IDebugFrame> frameCache = new ConcurrentHashMap<>();
+	private final ConcurrentHashMap<Long, long[]> frameIdsByThreadId = new ConcurrentHashMap<>();
 
 	/**
 	 * Set the Lucee classloader for reflection access to Lucee core classes.
@@ -189,13 +193,31 @@ public class NativeLuceeVm implements ILuceeVm {
 			return new IDebugFrame[0];
 		}
 
-		// Cache frames for later scope/variable lookups
-		for (IDebugFrame frame : frames) {
-			frameCache.put(frame.getId(), frame);
+		// Cache frames for later scope/variable lookups, replacing any frames
+		// we cached for a prior suspension of this same thread (a thread can
+		// only be suspended at one location at a time).
+		evictFramesForThread(threadID);
+		long[] ids = new long[frames.length];
+		for (int i = 0; i < frames.length; i++) {
+			frameCache.put(frames[i].getId(), frames[i]);
+			ids[i] = frames[i].getId();
 		}
+		frameIdsByThreadId.put(threadID, ids);
 
 		Log.trace("getStackTrace: returning " + frames.length + " frames for thread " + threadID);
 		return frames;
+	}
+
+	/**
+	 * Remove this thread's cached frames from frameCache so they can't be
+	 * returned to clients (by frameId lookup or iteration) after the thread
+	 * has resumed.
+	 */
+	private void evictFramesForThread(long threadID) {
+		long[] ids = frameIdsByThreadId.remove(threadID);
+		if (ids != null) {
+			for (long id : ids) frameCache.remove(id);
+		}
 	}
 
 	private Thread findThreadById(long threadId) {
@@ -291,11 +313,14 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	@Override
 	public void continue_(long threadID) {
+		evictFramesForThread(threadID);
 		NativeDebuggerListener.resumeNativeThread(threadID);
 	}
 
 	@Override
 	public void continueAll() {
+		frameCache.clear();
+		frameIdsByThreadId.clear();
 		NativeDebuggerListener.resumeAllNativeThreads();
 	}
 
@@ -367,12 +392,10 @@ public class NativeLuceeVm implements ILuceeVm {
 
 		// Fallback: try any suspended frame's PageContext
 		if (pc == null) {
-			for (IDebugFrame frame : frameCache.values()) {
-				if (frame instanceof NativeDebugFrame) {
-					pc = ((NativeDebugFrame) frame).getPageContext();
-					if (pc != null) break;
-				}
-			}
+			// Fall back to the PC of whichever thread is currently suspended.
+			// Can't scan frameCache: may contain stale frames from a prior
+			// suspension and would hand back the wrong PC.
+			pc = NativeDebuggerListener.getAnySuspendedPageContext();
 		}
 
 		if (pc == null) {
@@ -455,12 +478,10 @@ public class NativeLuceeVm implements ILuceeVm {
 
 		// If no PageContext from frame, try to find any suspended frame's PageContext
 		if (pc == null) {
-			for (IDebugFrame frame : frameCache.values()) {
-				if (frame instanceof NativeDebugFrame) {
-					pc = ((NativeDebugFrame) frame).getPageContext();
-					if (pc != null) break;
-				}
-			}
+			// Fall back to the PC of whichever thread is currently suspended.
+			// Can't scan frameCache: may contain stale frames from a prior
+			// suspension and would hand back the wrong PC.
+			pc = NativeDebuggerListener.getAnySuspendedPageContext();
 		}
 
 		if (pc == null) {
@@ -551,19 +572,14 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	@Override
 	public String getApplicationSettings() {
-		// Get PageContext from any suspended frame
-		PageContext pc = null;
-		for (IDebugFrame frame : frameCache.values()) {
-			if (frame instanceof NativeDebugFrame) {
-				pc = ((NativeDebugFrame) frame).getPageContext();
-				if (pc != null) break;
-			}
-		}
-
+		// Must read from the suspended-threads map, not frameCache: frameCache
+		// accumulates frames across suspensions and would hand back a stale PC
+		// whose applicationContext field was never populated (or populated for
+		// a different request's app context).
+		PageContext pc = NativeDebuggerListener.getAnySuspendedPageContext();
 		if (pc == null) {
 			return "\"No PageContext available\"";
 		}
-
 		return doGetApplicationSettingsWithPageContext(pc);
 	}
 
@@ -625,12 +641,9 @@ public class NativeLuceeVm implements ILuceeVm {
 			pc = ((NativeDebugFrame) frame).getPageContext();
 		}
 		if (pc == null) {
-			for (IDebugFrame f : frameCache.values()) {
-				if (f instanceof NativeDebugFrame) {
-					pc = ((NativeDebugFrame) f).getPageContext();
-					if (pc != null) break;
-				}
-			}
+			// Same rationale as the other fallback sites — use the suspend
+			// map, not frameCache, to avoid stale PCs from earlier suspensions.
+			pc = NativeDebuggerListener.getAnySuspendedPageContext();
 		}
 
 		if (pc == null) {
