@@ -13,7 +13,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 	// Line numbers in completions-target.cfm — keep in sync with the file.
 	// Validated by the "target line is a valid breakpoint location" spec below.
 	variables.lines = {
-		debugLine: 22  // var stopHere = true;
+		debugLine: 23  // var stopHere = true;
 	};
 
 	function beforeAll() {
@@ -199,9 +199,8 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				var completionsResponse = dap.completions( frame.id, "myComponent." );
 				var labels = completionsResponse.body.targets.map( function( t ) { return t.label; } );
 
-				// DapClient has public methods like connect, disconnect.
-				expect( labels ).toInclude( "connect" );
-				expect( labels ).toInclude( "disconnect" );
+				// SampleComponent exposes greet() + its `foo` property accessors (getFoo/setFoo).
+				expect( labels ).toInclude( "greet" );
 
 				cleanupThread( threadId );
 			} );

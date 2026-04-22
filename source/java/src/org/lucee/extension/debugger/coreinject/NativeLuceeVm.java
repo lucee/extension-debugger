@@ -713,25 +713,12 @@ public class NativeLuceeVm implements ILuceeVm {
 					}
 				}
 
-				// Also try to complete from variables scope
-				try {
-					Object variablesScope = pc.variablesScope();
-					if (variablesScope instanceof java.util.Map) {
-						@SuppressWarnings("unchecked")
-						java.util.Map<Object, Object> map = (java.util.Map<Object, Object>) variablesScope;
-						for (Object key : map.keySet()) {
-							String keyStr = String.valueOf(key);
-							if (keyStr.toLowerCase().startsWith(prefix)) {
-								var item = new org.eclipse.lsp4j.debug.CompletionItem();
-								item.setLabel(keyStr);
-								item.setType(org.eclipse.lsp4j.debug.CompletionItemType.VARIABLE);
-								results.add(item);
-							}
-						}
-					}
-				} catch (Exception e) {
-					// Ignore scope access errors
-				}
+				// Also complete from the frame's variable scopes. When suspended inside a
+				// UDF, `var`-declared locals live in local scope and named parameters in
+				// arguments scope — not the variables scope — so all three need checking.
+				try { addScopeCompletions(pc.variablesScope(), prefix, results); } catch (Exception e) {}
+				try { addScopeCompletions(pc.localScope(), prefix, results); } catch (Exception e) {}
+				try { addScopeCompletions(pc.argumentsScope(), prefix, results); } catch (Exception e) {}
 			}
 		} catch (Exception e) {
 			Log.debug("Completion failed: " + e.getMessage());
@@ -749,6 +736,25 @@ public class NativeLuceeVm implements ILuceeVm {
 			return results.subList(0, 100).toArray(new org.eclipse.lsp4j.debug.CompletionItem[0]);
 		}
 		return results.toArray(new org.eclipse.lsp4j.debug.CompletionItem[0]);
+	}
+
+	/**
+	 * Add items from a scope whose keys start with the given (lowercase) prefix
+	 * to the completions list. No-op if the scope isn't iterable as a Map.
+	 */
+	private static void addScopeCompletions(Object scope, String prefix, java.util.List<org.eclipse.lsp4j.debug.CompletionItem> results) {
+		if (!(scope instanceof java.util.Map)) return;
+		@SuppressWarnings("unchecked")
+		java.util.Map<Object, Object> map = (java.util.Map<Object, Object>) scope;
+		for (Object key : map.keySet()) {
+			String keyStr = String.valueOf(key);
+			if (keyStr.toLowerCase().startsWith(prefix)) {
+				var item = new org.eclipse.lsp4j.debug.CompletionItem();
+				item.setLabel(keyStr);
+				item.setType(org.eclipse.lsp4j.debug.CompletionItemType.VARIABLE);
+				results.add(item);
+			}
+		}
 	}
 
 	@Override
