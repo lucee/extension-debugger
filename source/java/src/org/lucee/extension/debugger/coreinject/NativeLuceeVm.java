@@ -12,6 +12,7 @@ import lucee.runtime.dump.DumpData;
 import lucee.runtime.dump.DumpProperties;
 import lucee.runtime.dump.DumpUtil;
 import lucee.runtime.dump.DumpWriter;
+import lucee.runtime.engine.ThreadLocalPageContext;
 
 import org.lucee.extension.debugger.*;
 import org.lucee.extension.debugger.coreinject.frame.NativeDebugFrame;
@@ -137,38 +138,19 @@ public class NativeLuceeVm implements ILuceeVm {
 		}
 
 		try {
-			// Get CFMLEngine via the loader's factory (available to extension classloader)
-			Object engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
+			// CFMLEngineFactory.getInstance() returns the wrapper; unwrap to the impl,
+			// which exposes getCFMLFactories(). Mirrors Lucee core's own usage at
+			// FDControllerImpl.java:103 in 7.1.
+			lucee.loader.engine.CFMLEngineWrapper wrapper = (lucee.loader.engine.CFMLEngineWrapper) lucee.loader.engine.CFMLEngineFactory.getInstance();
+			lucee.runtime.engine.CFMLEngineImpl engine = (lucee.runtime.engine.CFMLEngineImpl) wrapper.getEngine();
 
-			// The factory returns CFMLEngineWrapper - unwrap to get CFMLEngineImpl
-			java.lang.reflect.Method getEngineMethod = engine.getClass().getMethod("getEngine");
-			Object engineImpl = getEngineMethod.invoke(engine);
-
-			// Get all CFMLFactory instances from the engine impl
-			// CFMLEngineImpl has getCFMLFactories() returning Map<String, CFMLFactory>
-			java.lang.reflect.Method getFactoriesMethod = engineImpl.getClass().getMethod("getCFMLFactories");
-			@SuppressWarnings("unchecked")
-			java.util.Map<String, ?> factoriesMap = (java.util.Map<String, ?>) getFactoriesMethod.invoke(engineImpl);
-			Object[] factories = factoriesMap.values().toArray();
-
-			for (Object factory : factories) {
+			for (lucee.runtime.CFMLFactory factory : engine.getCFMLFactories().values()) {
 				try {
-					// Call getActivePageContexts() - it's in CFMLFactoryImpl
-					java.lang.reflect.Method getActiveMethod = factory.getClass().getMethod("getActivePageContexts");
-					@SuppressWarnings("unchecked")
-					java.util.Map<Integer, ?> activeContexts = (java.util.Map<Integer, ?>) getActiveMethod.invoke(factory);
-
-					// Each PageContext has a getThread() method
-					for (Object pc : activeContexts.values()) {
-						try {
-							java.lang.reflect.Method getThreadMethod = pc.getClass().getMethod("getThread");
-							Thread thread = (Thread) getThreadMethod.invoke(pc);
-							if (thread != null && !seenThreadIds.contains(thread.getId())) {
-								result.add(new ThreadInfo(thread.getId(), thread.getName()));
-								seenThreadIds.add(thread.getId());
-							}
-						} catch (Exception e) {
-							// Skip this context if we can't get its thread
+					for (lucee.runtime.PageContextImpl pc : ((lucee.runtime.CFMLFactoryImpl) factory).getActivePageContexts().values()) {
+						Thread thread = pc.getThread();
+						if (thread != null && !seenThreadIds.contains(thread.getId())) {
+							result.add(new ThreadInfo(thread.getId(), thread.getName()));
+							seenThreadIds.add(thread.getId());
 						}
 					}
 				} catch (Exception e) {
@@ -413,14 +395,7 @@ public class NativeLuceeVm implements ILuceeVm {
 
 		Thread thread = new Thread(() -> {
 			try {
-				ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
-
-				// Register the existing PageContext with ThreadLocal
-				Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
-				java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
-				java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
-				registerMethod.invoke(null, pc);
-
+				ThreadLocalPageContext.register(pc);
 				try {
 					// loadBIF with the short function name resolves via Lucee's FunctionLib
 					// instead of the OSGi classloader, so we don't need the bundle to
@@ -432,7 +407,7 @@ public class NativeLuceeVm implements ILuceeVm {
 					lucee.runtime.ext.function.BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
 					result.value = (String) serializeJsonBif.invoke(pc, new Object[] { metadata, "struct" });
 				} finally {
-					releaseMethod.invoke(null);
+					ThreadLocalPageContext.release();
 				}
 			} catch (Throwable e) {
 				Log.debug("getMetadata failed: " + e.getMessage());
@@ -508,14 +483,7 @@ public class NativeLuceeVm implements ILuceeVm {
 
 		Thread thread = new Thread(() -> {
 			try {
-				ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
-
-				// Register the existing PageContext with ThreadLocal
-				Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
-				java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
-				java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
-				registerMethod.invoke(null, pc);
-
+				ThreadLocalPageContext.register(pc);
 				try {
 					if (asJson) {
 						// Resolve via FunctionLib by short name (see doGetMetadataWithPageContext).
@@ -526,7 +494,7 @@ public class NativeLuceeVm implements ILuceeVm {
 						result.value = wrapDumpInHtmlDoc(dumpObjectAsHtml(pc, dumpable));
 					}
 				} finally {
-					releaseMethod.invoke(null);
+					ThreadLocalPageContext.release();
 				}
 			} catch (Throwable e) {
 				Log.debug("dump failed: " + e.getMessage());
@@ -611,27 +579,18 @@ public class NativeLuceeVm implements ILuceeVm {
 
 		Thread thread = new Thread(() -> {
 			try {
-				ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
-
-				// Register the existing PageContext with ThreadLocal
-				Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
-				java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
-				java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
-				registerMethod.invoke(null, pc);
-
+				ThreadLocalPageContext.register(pc);
 				try {
-					// Call GetApplicationSettings.call(PageContext)
-					Class<?> getAppSettingsClass = cl.loadClass("lucee.runtime.functions.system.GetApplicationSettings");
-					java.lang.reflect.Method callMethod = getAppSettingsClass.getMethod("call", PageContext.class);
-					Object settings = callMethod.invoke(null, pc);
+					// Resolve both BIFs via FunctionLib by short name; matches the dump/metadata paths.
+					lucee.loader.engine.CFMLEngine engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
 
-					// Serialize the settings to JSON
-					Class<?> serializeClass = cl.loadClass("lucee.runtime.functions.conversion.SerializeJSON");
-					java.lang.reflect.Method serializeMethod = serializeClass.getMethod("call",
-						PageContext.class, Object.class, Object.class);
-					result.value = (String) serializeMethod.invoke(null, pc, settings, "struct");
+					lucee.runtime.ext.function.BIF getAppSettingsBif = engine.getClassUtil().loadBIF(pc, "getApplicationSettings");
+					Object settings = getAppSettingsBif.invoke(pc, new Object[] {});
+
+					lucee.runtime.ext.function.BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
+					result.value = (String) serializeJsonBif.invoke(pc, new Object[] { settings, "struct" });
 				} finally {
-					releaseMethod.invoke(null);
+					ThreadLocalPageContext.release();
 				}
 			} catch (Throwable e) {
 				Log.debug("getApplicationSettings failed: " + e.getMessage());
@@ -699,15 +658,14 @@ public class NativeLuceeVm implements ILuceeVm {
 			}
 
 			if (base != null) {
-				// Evaluate the base to get keys
+				// Evaluate the base to get keys.
+				// Note: Evaluate implements Function, not BIF — must go through reflection
+				// rather than engine.getClassUtil().loadBIF(pc, "evaluate").
 				try {
-					Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
-					java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
-					java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
 					Class<?> evaluateClass = cl.loadClass("lucee.runtime.functions.dynamicEvaluation.Evaluate");
 					java.lang.reflect.Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
 
-					registerMethod.invoke(null, pc);
+					ThreadLocalPageContext.register(pc);
 					try {
 						Object result = callMethod.invoke(null, pc, new Object[]{base});
 						if (result instanceof java.util.Map) {
@@ -724,7 +682,7 @@ public class NativeLuceeVm implements ILuceeVm {
 							}
 						}
 					} finally {
-						releaseMethod.invoke(null);
+						ThreadLocalPageContext.release();
 					}
 				} catch (Exception e) {
 					// Evaluation failed, return empty
@@ -803,26 +761,16 @@ public class NativeLuceeVm implements ILuceeVm {
 		}
 
 		try {
-			// Use reflection to access Lucee classes - in extension mode, direct class access fails
+			// Evaluate implements Function, not BIF — use reflection rather than loadBIF.
 			ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
-
-			// Get ThreadLocalPageContext class and methods via reflection
-			Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
-			java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
-			java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
-
-			// Get Evaluate class and call method via reflection
 			Class<?> evaluateClass = cl.loadClass("lucee.runtime.functions.dynamicEvaluation.Evaluate");
 			java.lang.reflect.Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
 
-			// Register PageContext with ThreadLocal so Lucee functions work
-			registerMethod.invoke(null, pc);
+			ThreadLocalPageContext.register(pc);
 
 			try {
-				// Evaluate the expression
 				Object result = callMethod.invoke(null, pc, new Object[]{expr});
 
-				// Return the result as a debug entity
 				if (result == null) {
 					return Either.Right(Either.Right("null"));
 				} else if (result instanceof String) {
@@ -830,15 +778,13 @@ public class NativeLuceeVm implements ILuceeVm {
 				} else if (result instanceof Number || result instanceof Boolean) {
 					return Either.Right(Either.Right(result.toString()));
 				} else {
-					// Complex object - wrap it for display
 					CfValueDebuggerBridge bridge = new CfValueDebuggerBridge(valTracker, result);
 					return Either.Right(Either.Left(bridge));
 				}
 			} finally {
-				releaseMethod.invoke(null);
+				ThreadLocalPageContext.release();
 			}
 		} catch (Throwable e) {
-			// Unwrap InvocationTargetException to get the real cause
 			Throwable cause = e;
 			if (e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null) {
 				cause = e.getCause();
@@ -884,20 +830,12 @@ public class NativeLuceeVm implements ILuceeVm {
 		Log.debug("setVariable: " + fullPath + " = " + value);
 
 		try {
-			// Use reflection to access Lucee classes - in extension mode, direct class access fails
+			// Evaluate implements Function, not BIF — use reflection rather than loadBIF.
 			ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
-
-			// Get ThreadLocalPageContext class and methods via reflection
-			Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
-			java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
-			java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
-
-			// Get Evaluate class and call method via reflection
 			Class<?> evaluateClass = cl.loadClass("lucee.runtime.functions.dynamicEvaluation.Evaluate");
 			java.lang.reflect.Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
 
-			// Register PageContext with ThreadLocal so Lucee functions work
-			registerMethod.invoke(null, pc);
+			ThreadLocalPageContext.register(pc);
 
 			try {
 				// First, evaluate the value expression to get the actual object
@@ -919,7 +857,7 @@ public class NativeLuceeVm implements ILuceeVm {
 					return Either.Right(Either.Left(bridge));
 				}
 			} finally {
-				releaseMethod.invoke(null);
+				ThreadLocalPageContext.release();
 			}
 		} catch (Throwable e) {
 			// Unwrap InvocationTargetException to get the real cause

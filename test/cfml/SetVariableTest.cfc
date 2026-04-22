@@ -11,8 +11,8 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 	// Line numbers in set-variable-target.cfm — keep in sync with the file.
 	variables.lines = {
-		checkpoint1: 14,  // var checkpoint1 = true;
-		checkpoint2: 20   // var checkpoint2 = true;
+		checkpoint1: 15,  // var checkpoint1 = true;
+		checkpoint2: 21   // var checkpoint2 = true;
 	};
 
 	function beforeAll() {
@@ -162,10 +162,13 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				var frame = getTopFrame( threadId );
 				var localScope = getScopeByName( frame.id, "Local" );
 
-				var checkpoint = getVariableByName( localScope.variablesReference, "checkpoint1" );
-				expect( checkpoint.value.lcase() ).toBe( "true" );
+				// booleanVar is assigned before the checkpoint1 breakpoint line, so it
+				// exists in local scope when native stops AT that line. `checkpoint1`
+				// itself can't be used — native breaks before the assignment runs.
+				var boolVar = getVariableByName( localScope.variablesReference, "booleanVar" );
+				expect( boolVar.value.lcase() ).toBe( "true" );
 
-				var setResponse = dap.setVariable( localScope.variablesReference, "checkpoint1", "false" );
+				var setResponse = dap.setVariable( localScope.variablesReference, "booleanVar", "false" );
 				expect( setResponse.body.value.lcase() ).toBe( "false" );
 
 				cleanupThread( threadId );
