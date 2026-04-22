@@ -724,10 +724,7 @@ public class LuceeVm implements ILuceeVm {
 
     public IDebugFrame[] getStackTrace(long jdwpThreadId) {
         var thread = threadMap_.getThreadByJdwpIdOrFail(new JdwpThreadID(jdwpThreadId));
-        System.out.println("[luceedebug] getStackTrace: jdwpThreadId=" + jdwpThreadId + " -> thread=" + thread.getName() + " (id=" + thread.getId() + ") identity=" + System.identityHashCode(thread));
-        var frames = GlobalIDebugManagerHolder.debugManager.getCfStack(thread);
-        System.out.println("[luceedebug] getStackTrace: returning " + frames.length + " frames");
-        return frames;
+        return GlobalIDebugManagerHolder.debugManager.getCfStack(thread);
     }
 
     public IDebugEntity[] getScopes(long frameID) {
