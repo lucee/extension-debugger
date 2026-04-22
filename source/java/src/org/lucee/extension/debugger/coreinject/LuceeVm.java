@@ -21,6 +21,9 @@ import java.util.stream.Collectors;
 import com.sun.jdi.*;
 import com.sun.jdi.event.*;
 import com.sun.jdi.request.*;
+
+import org.eclipse.lsp4j.debug.CompletionItem;
+
 import org.lucee.extension.debugger.util.ConcurrentWeakKeyMap;
 
 import java.util.concurrent.ExecutorService;
@@ -497,7 +500,7 @@ public class LuceeVm implements ILuceeVm {
     }
 
     private void initEventPump() {
-        var pumpThread = new java.lang.Thread(() -> {
+        var pumpThread = new Thread(() -> {
             try {
                 while (true) {
                     var eventSet = vm_.eventQueue().remove();
@@ -1123,9 +1126,9 @@ public class LuceeVm implements ILuceeVm {
         return "\"getApplicationSettings not supported in JDWP mode\"";
     }
 
-    public org.eclipse.lsp4j.debug.CompletionItem[] getCompletions(int frameId, String partialExpr) {
+    public CompletionItem[] getCompletions(int frameId, String partialExpr) {
         // Not implemented for JDWP mode
-        return new org.eclipse.lsp4j.debug.CompletionItem[0];
+        return new CompletionItem[0];
     }
 
     public String[] getTrackedCanonicalFileNames() {

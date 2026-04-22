@@ -1,18 +1,35 @@
 package org.lucee.extension.debugger.coreinject;
 
 import java.lang.ref.Cleaner;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
+import org.eclipse.lsp4j.debug.CompletionItem;
+import org.eclipse.lsp4j.debug.CompletionItemType;
+
+import lucee.loader.engine.CFMLEngine;
+import lucee.loader.engine.CFMLEngineFactory;
+import lucee.loader.engine.CFMLEngineWrapper;
+import lucee.runtime.CFMLFactory;
+import lucee.runtime.CFMLFactoryImpl;
 import lucee.runtime.PageContext;
+import lucee.runtime.PageContextImpl;
 import lucee.runtime.dump.DumpData;
 import lucee.runtime.dump.DumpProperties;
 import lucee.runtime.dump.DumpUtil;
 import lucee.runtime.dump.DumpWriter;
+import lucee.runtime.engine.CFMLEngineImpl;
 import lucee.runtime.engine.ThreadLocalPageContext;
+import lucee.runtime.ext.function.BIF;
 
 import org.lucee.extension.debugger.*;
 import org.lucee.extension.debugger.coreinject.frame.NativeDebugFrame;
@@ -130,7 +147,7 @@ public class NativeLuceeVm implements ILuceeVm {
 	@Override
 	public ThreadInfo[] getThreadListing() {
 		var result = new ArrayList<ThreadInfo>();
-		var seenThreadIds = new java.util.HashSet<Long>();
+		var seenThreadIds = new HashSet<Long>();
 
 		// First, add any suspended threads (these are most important for debugging)
 		for (Long threadId : NativeDebuggerListener.getSuspendedThreadIds()) {
@@ -145,12 +162,12 @@ public class NativeLuceeVm implements ILuceeVm {
 			// CFMLEngineFactory.getInstance() returns the wrapper; unwrap to the impl,
 			// which exposes getCFMLFactories(). Mirrors Lucee core's own usage at
 			// FDControllerImpl.java:103 in 7.1.
-			lucee.loader.engine.CFMLEngineWrapper wrapper = (lucee.loader.engine.CFMLEngineWrapper) lucee.loader.engine.CFMLEngineFactory.getInstance();
-			lucee.runtime.engine.CFMLEngineImpl engine = (lucee.runtime.engine.CFMLEngineImpl) wrapper.getEngine();
+			CFMLEngineWrapper wrapper = (CFMLEngineWrapper) CFMLEngineFactory.getInstance();
+			CFMLEngineImpl engine = (CFMLEngineImpl) wrapper.getEngine();
 
-			for (lucee.runtime.CFMLFactory factory : engine.getCFMLFactories().values()) {
+			for (CFMLFactory factory : engine.getCFMLFactories().values()) {
 				try {
-					for (lucee.runtime.PageContextImpl pc : ((lucee.runtime.CFMLFactoryImpl) factory).getActivePageContexts().values()) {
+					for (PageContextImpl pc : ((CFMLFactoryImpl) factory).getActivePageContexts().values()) {
 						Thread thread = pc.getThread();
 						if (thread != null && !seenThreadIds.contains(thread.getId())) {
 							result.add(new ThreadInfo(thread.getId(), thread.getName()));
@@ -280,7 +297,7 @@ public class NativeLuceeVm implements ILuceeVm {
 
 		// Get executable lines to validate breakpoints
 		int[] executableLines = getExecutableLines(serverPath.get());
-		java.util.Set<Integer> validLines = new java.util.HashSet<>();
+		Set<Integer> validLines = new HashSet<>();
 		for (int line : executableLines) {
 			validLines.add(line);
 		}
@@ -423,11 +440,11 @@ public class NativeLuceeVm implements ILuceeVm {
 					// loadBIF with the short function name resolves via Lucee's FunctionLib
 					// instead of the OSGi classloader, so we don't need the bundle to
 					// self-import lucee.runtime.functions.system.
-					lucee.loader.engine.CFMLEngine engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
-					lucee.runtime.ext.function.BIF getMetaDataBif = engine.getClassUtil().loadBIF(pc, "getMetaData");
+					CFMLEngine engine = CFMLEngineFactory.getInstance();
+					BIF getMetaDataBif = engine.getClassUtil().loadBIF(pc, "getMetaData");
 					Object metadata = getMetaDataBif.invoke(pc, new Object[] { obj });
 
-					lucee.runtime.ext.function.BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
+					BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
 					result.value = (String) serializeJsonBif.invoke(pc, new Object[] { metadata, "struct" });
 				} finally {
 					ThreadLocalPageContext.release();
@@ -508,8 +525,8 @@ public class NativeLuceeVm implements ILuceeVm {
 				try {
 					if (asJson) {
 						// Resolve via FunctionLib by short name (see doGetMetadataWithPageContext).
-						lucee.loader.engine.CFMLEngine engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
-						lucee.runtime.ext.function.BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
+						CFMLEngine engine = CFMLEngineFactory.getInstance();
+						BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
 						result.value = (String) serializeJsonBif.invoke(pc, new Object[] { dumpable, "struct" });
 					} else {
 						result.value = wrapDumpInHtmlDoc(dumpObjectAsHtml(pc, dumpable));
@@ -598,12 +615,12 @@ public class NativeLuceeVm implements ILuceeVm {
 				ThreadLocalPageContext.register(pc);
 				try {
 					// Resolve both BIFs via FunctionLib by short name; matches the dump/metadata paths.
-					lucee.loader.engine.CFMLEngine engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
+					CFMLEngine engine = CFMLEngineFactory.getInstance();
 
-					lucee.runtime.ext.function.BIF getAppSettingsBif = engine.getClassUtil().loadBIF(pc, "getApplicationSettings");
+					BIF getAppSettingsBif = engine.getClassUtil().loadBIF(pc, "getApplicationSettings");
 					Object settings = getAppSettingsBif.invoke(pc, new Object[] {});
 
-					lucee.runtime.ext.function.BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
+					BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
 					result.value = (String) serializeJsonBif.invoke(pc, new Object[] { settings, "struct" });
 				} finally {
 					ThreadLocalPageContext.release();
@@ -633,7 +650,7 @@ public class NativeLuceeVm implements ILuceeVm {
 	}
 
 	@Override
-	public org.eclipse.lsp4j.debug.CompletionItem[] getCompletions(int frameId, String partialExpr) {
+	public CompletionItem[] getCompletions(int frameId, String partialExpr) {
 		// Get PageContext from frame or any suspended frame
 		PageContext pc = null;
 		IDebugFrame frame = frameCache.get((long) frameId);
@@ -647,14 +664,14 @@ public class NativeLuceeVm implements ILuceeVm {
 		}
 
 		if (pc == null) {
-			return new org.eclipse.lsp4j.debug.CompletionItem[0];
+			return new CompletionItem[0];
 		}
 
 		return doGetCompletionsWithPageContext(pc, partialExpr);
 	}
 
-	private org.eclipse.lsp4j.debug.CompletionItem[] doGetCompletionsWithPageContext(PageContext pc, String partialExpr) {
-		final java.util.List<org.eclipse.lsp4j.debug.CompletionItem> results = new java.util.ArrayList<>();
+	private CompletionItem[] doGetCompletionsWithPageContext(PageContext pc, String partialExpr) {
+		final List<CompletionItem> results = new ArrayList<>();
 
 		try {
 			ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
@@ -676,20 +693,20 @@ public class NativeLuceeVm implements ILuceeVm {
 				// rather than engine.getClassUtil().loadBIF(pc, "evaluate").
 				try {
 					Class<?> evaluateClass = cl.loadClass("lucee.runtime.functions.dynamicEvaluation.Evaluate");
-					java.lang.reflect.Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
+					Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
 
 					ThreadLocalPageContext.register(pc);
 					try {
 						Object result = callMethod.invoke(null, pc, new Object[]{base});
-						if (result instanceof java.util.Map) {
+						if (result instanceof Map) {
 							@SuppressWarnings("unchecked")
-							java.util.Map<Object, Object> map = (java.util.Map<Object, Object>) result;
+							Map<Object, Object> map = (Map<Object, Object>) result;
 							for (Object key : map.keySet()) {
 								String keyStr = String.valueOf(key);
 								if (keyStr.toLowerCase().startsWith(prefix)) {
-									var item = new org.eclipse.lsp4j.debug.CompletionItem();
+									var item = new CompletionItem();
 									item.setLabel(keyStr);
-									item.setType(org.eclipse.lsp4j.debug.CompletionItemType.PROPERTY);
+									item.setType(CompletionItemType.PROPERTY);
 									results.add(item);
 								}
 							}
@@ -706,9 +723,9 @@ public class NativeLuceeVm implements ILuceeVm {
 				String[] scopes = {"variables", "local", "arguments", "form", "url", "cgi", "cookie", "session", "application", "server", "request", "this"};
 				for (String scope : scopes) {
 					if (scope.toLowerCase().startsWith(prefix)) {
-						var item = new org.eclipse.lsp4j.debug.CompletionItem();
+						var item = new CompletionItem();
 						item.setLabel(scope);
-						item.setType(org.eclipse.lsp4j.debug.CompletionItemType.MODULE);
+						item.setType(CompletionItemType.MODULE);
 						results.add(item);
 					}
 				}
@@ -733,25 +750,25 @@ public class NativeLuceeVm implements ILuceeVm {
 		}
 
 		if (results.size() > 100) {
-			return results.subList(0, 100).toArray(new org.eclipse.lsp4j.debug.CompletionItem[0]);
+			return results.subList(0, 100).toArray(new CompletionItem[0]);
 		}
-		return results.toArray(new org.eclipse.lsp4j.debug.CompletionItem[0]);
+		return results.toArray(new CompletionItem[0]);
 	}
 
 	/**
 	 * Add items from a scope whose keys start with the given (lowercase) prefix
 	 * to the completions list. No-op if the scope isn't iterable as a Map.
 	 */
-	private static void addScopeCompletions(Object scope, String prefix, java.util.List<org.eclipse.lsp4j.debug.CompletionItem> results) {
-		if (!(scope instanceof java.util.Map)) return;
+	private static void addScopeCompletions(Object scope, String prefix, List<CompletionItem> results) {
+		if (!(scope instanceof Map)) return;
 		@SuppressWarnings("unchecked")
-		java.util.Map<Object, Object> map = (java.util.Map<Object, Object>) scope;
+		Map<Object, Object> map = (Map<Object, Object>) scope;
 		for (Object key : map.keySet()) {
 			String keyStr = String.valueOf(key);
 			if (keyStr.toLowerCase().startsWith(prefix)) {
-				var item = new org.eclipse.lsp4j.debug.CompletionItem();
+				var item = new CompletionItem();
 				item.setLabel(keyStr);
-				item.setType(org.eclipse.lsp4j.debug.CompletionItemType.VARIABLE);
+				item.setType(CompletionItemType.VARIABLE);
 				results.add(item);
 			}
 		}
@@ -783,7 +800,7 @@ public class NativeLuceeVm implements ILuceeVm {
 			// Evaluate implements Function, not BIF — use reflection rather than loadBIF.
 			ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
 			Class<?> evaluateClass = cl.loadClass("lucee.runtime.functions.dynamicEvaluation.Evaluate");
-			java.lang.reflect.Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
+			Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
 
 			ThreadLocalPageContext.register(pc);
 
@@ -805,7 +822,7 @@ public class NativeLuceeVm implements ILuceeVm {
 			}
 		} catch (Throwable e) {
 			Throwable cause = e;
-			if (e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null) {
+			if (e instanceof InvocationTargetException && e.getCause() != null) {
 				cause = e.getCause();
 			}
 			String msg = cause.getMessage();
@@ -852,7 +869,7 @@ public class NativeLuceeVm implements ILuceeVm {
 			// Evaluate implements Function, not BIF — use reflection rather than loadBIF.
 			ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
 			Class<?> evaluateClass = cl.loadClass("lucee.runtime.functions.dynamicEvaluation.Evaluate");
-			java.lang.reflect.Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
+			Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
 
 			ThreadLocalPageContext.register(pc);
 
@@ -881,7 +898,7 @@ public class NativeLuceeVm implements ILuceeVm {
 		} catch (Throwable e) {
 			// Unwrap InvocationTargetException to get the real cause
 			Throwable cause = e;
-			if (e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null) {
+			if (e instanceof InvocationTargetException && e.getCause() != null) {
 				cause = e.getCause();
 			}
 			String msg = cause.getMessage();

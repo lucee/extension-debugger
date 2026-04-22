@@ -34,10 +34,10 @@ public class ClosureScope extends ClassVisitor {
     public void visitEnd() {
         final var name = "getLocalScope";
         final var descriptor = "()Llucee/runtime/type/scope/Scope;";
-        final var mv = visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC, name, descriptor, null, null);
-        final var ga = new GeneratorAdapter(mv, org.objectweb.asm.Opcodes.ACC_PUBLIC, name, descriptor);
+        final var mv = visitMethod(Opcodes.ACC_PUBLIC, name, descriptor, null, null);
+        final var ga = new GeneratorAdapter(mv, Opcodes.ACC_PUBLIC, name, descriptor);
         ga.loadThis();
-        ga.getField(org.objectweb.asm.Type.getType("Llucee/runtime/type/scope/ClosureScope;"), "local", org.objectweb.asm.Type.getType("Llucee/runtime/type/scope/Local;"));
+        ga.getField(Type.getType("Llucee/runtime/type/scope/ClosureScope;"), "local", Type.getType("Llucee/runtime/type/scope/Local;"));
         ga.returnValue();
         ga.endMethod();
     }

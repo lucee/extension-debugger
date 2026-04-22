@@ -1,7 +1,10 @@
 package org.lucee.extension.debugger.coreinject;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Date;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -247,7 +250,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         else if (obj instanceof Boolean) {
             val.value = obj.toString();
         }
-        else if (obj instanceof java.util.Date) {
+        else if (obj instanceof Date) {
             val.value = obj.toString();
         }
         else if (obj instanceof Array) {
@@ -275,10 +278,10 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         else if (isInstanceOf(obj, "lucee.runtime.type.QueryImpl")) {
             // Handle Query - use reflection to avoid ClassNotFoundException in OSGi
             try {
-                java.lang.reflect.Method toQueryArrayMethod = Class.forName("lucee.runtime.type.query.QueryArray", true, obj.getClass().getClassLoader())
+                Method toQueryArrayMethod = Class.forName("lucee.runtime.type.query.QueryArray", true, obj.getClass().getClassLoader())
                     .getMethod("toQueryArray", Class.forName("lucee.runtime.type.QueryImpl", true, obj.getClass().getClassLoader()));
                 Object queryAsArrayOfStructs = toQueryArrayMethod.invoke(null, obj);
-                java.lang.reflect.Method sizeMethod = queryAsArrayOfStructs.getClass().getMethod("size");
+                Method sizeMethod = queryAsArrayOfStructs.getClass().getMethod("size");
                 int size = (int) sizeMethod.invoke(queryAsArrayOfStructs);
                 val.value = "Query (" + size + " rows)";
 
@@ -363,13 +366,13 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         else if (isInstanceOf(obj, "lucee.runtime.type.UDFImpl")) {
             // Use reflection to avoid ClassNotFoundException in OSGi
             try {
-                java.lang.reflect.Field propsField = obj.getClass().getField("properties");
+                Field propsField = obj.getClass().getField("properties");
                 Object props = propsField.get(obj);
-                java.lang.reflect.Method getPageSourceMethod = props.getClass().getMethod("getPageSource");
+                Method getPageSourceMethod = props.getClass().getMethod("getPageSource");
                 Object pageSource = getPageSourceMethod.invoke(props);
-                java.lang.reflect.Method getPhyscalFileMethod = pageSource.getClass().getMethod("getPhyscalFile");
+                Method getPhyscalFileMethod = pageSource.getClass().getMethod("getPhyscalFile");
                 Object file = getPhyscalFileMethod.invoke(pageSource);
-                java.lang.reflect.Method getAbsolutePathMethod = file.getClass().getMethod("getAbsolutePath");
+                Method getAbsolutePathMethod = file.getClass().getMethod("getAbsolutePath");
                 return (String) getAbsolutePathMethod.invoke(file);
             } catch (Throwable e) {
                 return null;
@@ -378,11 +381,11 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         else if (isInstanceOf(obj, "lucee.runtime.type.UDFGSProperty")) {
             // Use reflection to avoid ClassNotFoundException in OSGi
             try {
-                java.lang.reflect.Method getPageSourceMethod = obj.getClass().getMethod("getPageSource");
+                Method getPageSourceMethod = obj.getClass().getMethod("getPageSource");
                 Object pageSource = getPageSourceMethod.invoke(obj);
-                java.lang.reflect.Method getPhyscalFileMethod = pageSource.getClass().getMethod("getPhyscalFile");
+                Method getPhyscalFileMethod = pageSource.getClass().getMethod("getPhyscalFile");
                 Object file = getPhyscalFileMethod.invoke(pageSource);
-                java.lang.reflect.Method getAbsolutePathMethod = file.getClass().getMethod("getAbsolutePath");
+                Method getAbsolutePathMethod = file.getClass().getMethod("getAbsolutePath");
                 return (String) getAbsolutePathMethod.invoke(file);
             } catch (Throwable e) {
                 return null;

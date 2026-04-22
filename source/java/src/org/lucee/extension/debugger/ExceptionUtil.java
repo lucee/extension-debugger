@@ -1,5 +1,7 @@
 package org.lucee.extension.debugger;
 
+import java.lang.reflect.Method;
+
 /**
  * Utility class for extracting information from Lucee exceptions.
  * Uses reflection to handle OSGi classloader isolation.
@@ -36,27 +38,27 @@ public final class ExceptionUtil {
 			// Get Config via reflection (OSGi classloader isolation)
 			ClassLoader loader = ex.getClass().getClassLoader();
 			Class<?> tlpcClass = loader.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
-			java.lang.reflect.Method getConfig = tlpcClass.getMethod("getConfig");
+			Method getConfig = tlpcClass.getMethod("getConfig");
 			Object config = getConfig.invoke(null);
 			if (config == null) {
 				return null;
 			}
 			// Check if it's a PageException with getTagContext(Config)
 			Class<?> configClass = loader.loadClass("lucee.runtime.config.Config");
-			java.lang.reflect.Method getTagContext = ex.getClass().getMethod("getTagContext", configClass);
+			Method getTagContext = ex.getClass().getMethod("getTagContext", configClass);
 			Object tagContext = getTagContext.invoke(ex, config);
 			if (tagContext == null) {
 				return null;
 			}
 			// tagContext is a lucee.runtime.type.Array
 			StringBuilder sb = new StringBuilder();
-			java.lang.reflect.Method size = tagContext.getClass().getMethod("size");
-			java.lang.reflect.Method getE = tagContext.getClass().getMethod("getE", int.class);
+			Method size = tagContext.getClass().getMethod("size");
+			Method getE = tagContext.getClass().getMethod("getE", int.class);
 			int len = (Integer) size.invoke(tagContext);
 
 			// Get KeyImpl.init for creating keys
 			Class<?> keyImplClass = loader.loadClass("lucee.runtime.type.KeyImpl");
-			java.lang.reflect.Method keyInit = keyImplClass.getMethod("init", String.class);
+			Method keyInit = keyImplClass.getMethod("init", String.class);
 			Object templateKey = keyInit.invoke(null, "template");
 			Object lineKey = keyInit.invoke(null, "line");
 
@@ -66,7 +68,7 @@ public final class ExceptionUtil {
 			for (int i = 1; i <= len; i++) {
 				Object item = getE.invoke(tagContext, i);
 				// item is a Struct with template, line, codePrintPlain
-				java.lang.reflect.Method get = item.getClass().getMethod("get", keyClass, Object.class);
+				Method get = item.getClass().getMethod("get", keyClass, Object.class);
 				String template = (String) get.invoke(item, templateKey, "");
 				Object lineObj = get.invoke(item, lineKey, 0);
 				int line = lineObj instanceof Number ? ((Number) lineObj).intValue() : 0;
@@ -86,33 +88,33 @@ public final class ExceptionUtil {
 		try {
 			ClassLoader loader = ex.getClass().getClassLoader();
 			Class<?> tlpcClass = loader.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
-			java.lang.reflect.Method getConfig = tlpcClass.getMethod("getConfig");
+			Method getConfig = tlpcClass.getMethod("getConfig");
 			Object config = getConfig.invoke(null);
 			if (config == null) {
 				return null;
 			}
 			Class<?> configClass = loader.loadClass("lucee.runtime.config.Config");
-			java.lang.reflect.Method getTagContext = ex.getClass().getMethod("getTagContext", configClass);
+			Method getTagContext = ex.getClass().getMethod("getTagContext", configClass);
 			Object tagContext = getTagContext.invoke(ex, config);
 			if (tagContext == null) {
 				return null;
 			}
-			java.lang.reflect.Method size = tagContext.getClass().getMethod("size");
+			Method size = tagContext.getClass().getMethod("size");
 			int len = (Integer) size.invoke(tagContext);
 			if (len == 0) {
 				return null;
 			}
-			java.lang.reflect.Method getE = tagContext.getClass().getMethod("getE", int.class);
+			Method getE = tagContext.getClass().getMethod("getE", int.class);
 			Object item = getE.invoke(tagContext, 1);
 
 			// Create keys for struct access
 			Class<?> keyImplClass = loader.loadClass("lucee.runtime.type.KeyImpl");
-			java.lang.reflect.Method keyInit = keyImplClass.getMethod("init", String.class);
+			Method keyInit = keyImplClass.getMethod("init", String.class);
 			Object templateKey = keyInit.invoke(null, "template");
 			Object lineKey = keyInit.invoke(null, "line");
 			Class<?> keyClass = loader.loadClass("lucee.runtime.type.Collection$Key");
 
-			java.lang.reflect.Method get = item.getClass().getMethod("get", keyClass, Object.class);
+			Method get = item.getClass().getMethod("get", keyClass, Object.class);
 			String template = (String) get.invoke(item, templateKey, "");
 			Object lineObj = get.invoke(item, lineKey, 0);
 			int line = lineObj instanceof Number ? ((Number) lineObj).intValue() : 0;
@@ -145,7 +147,7 @@ public final class ExceptionUtil {
 	 */
 	public static String getDetail(Throwable ex) {
 		try {
-			java.lang.reflect.Method getDetail = ex.getClass().getMethod("getDetail");
+			Method getDetail = ex.getClass().getMethod("getDetail");
 			return (String) getDetail.invoke(ex);
 		} catch (Exception e) {
 			return null;

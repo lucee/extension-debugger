@@ -1,7 +1,11 @@
 package org.lucee.extension.debugger.coreinject.frame;
 
 import lucee.runtime.PageContext;
+import lucee.runtime.exp.PageException;
 
+import java.io.File;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -11,9 +15,10 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import org.lucee.extension.debugger.*;
 import org.lucee.extension.debugger.coreinject.CfValueDebuggerBridge;
-import org.lucee.extension.debugger.coreinject.DebugEntity;
-import org.lucee.extension.debugger.coreinject.ValTracker;
 import org.lucee.extension.debugger.coreinject.CfValueDebuggerBridge.MarkerTrait;
+import org.lucee.extension.debugger.coreinject.DebugEntity;
+import org.lucee.extension.debugger.coreinject.NativeDebuggerListener;
+import org.lucee.extension.debugger.coreinject.ValTracker;
 
 /**
  * Adapter that wraps Lucee7's native DebuggerFrame to implement IDebugFrame.
@@ -78,7 +83,7 @@ public class NativeDebugFrame implements IDebugFrame {
 		// file's basename so the stack view reads as "widget.cfm" not "??".
 		this.isIncludeFrame = kindField.get( nativeFrame ) == includeKindEnum;
 		if ( isIncludeFrame ) {
-			this.functionName = new java.io.File( this.sourceFilePath ).getName();
+			this.functionName = new File( this.sourceFilePath ).getName();
 		} else {
 			this.functionName = (String) functionNameField.get( nativeFrame );
 		}
@@ -292,8 +297,8 @@ public class NativeDebugFrame implements IDebugFrame {
 		String detail = "";
 		String errorCode = "";
 		String extendedInfo = "";
-		if ( exception instanceof lucee.runtime.exp.PageException ) {
-			lucee.runtime.exp.PageException pe = (lucee.runtime.exp.PageException) exception;
+		if ( exception instanceof PageException ) {
+			PageException pe = (PageException) exception;
 			detail = pe.getDetail() != null ? pe.getDetail() : "";
 			errorCode = pe.getErrorCode() != null ? pe.getErrorCode() : "";
 			extendedInfo = pe.getExtendedInfo() != null ? pe.getExtendedInfo() : "";
@@ -306,8 +311,8 @@ public class NativeDebugFrame implements IDebugFrame {
 		cfcatch.put( "javaClass", exception.getClass().getName() );
 
 		// Stack trace as string
-		java.io.StringWriter sw = new java.io.StringWriter();
-		exception.printStackTrace( new java.io.PrintWriter( sw ) );
+		StringWriter sw = new StringWriter();
+		exception.printStackTrace( new PrintWriter( sw ) );
 		cfcatch.put( "stackTrace", sw.toString() );
 
 		// Add as scope - pin both the wrapper and the inner map to prevent GC
@@ -326,8 +331,8 @@ public class NativeDebugFrame implements IDebugFrame {
 	 * Get the CFML-style type for an exception.
 	 */
 	private String getExceptionType( Throwable t ) {
-		if ( t instanceof lucee.runtime.exp.PageException ) {
-			lucee.runtime.exp.PageException pe = (lucee.runtime.exp.PageException) t;
+		if ( t instanceof PageException ) {
+			PageException pe = (PageException) t;
 			String type = pe.getTypeAsString();
 			if ( type != null && !type.isEmpty() ) {
 				return type;
@@ -454,7 +459,7 @@ public class NativeDebugFrame implements IDebugFrame {
 			Object[] nativeFrames = (Object[]) getDebuggerFramesMethod.invoke( pageContext );
 
 			// Get suspend location - may contain exception info
-			var location = org.lucee.extension.debugger.coreinject.NativeDebuggerListener.getSuspendLocation( threadId );
+			var location = NativeDebuggerListener.getSuspendLocation( threadId );
 			Throwable exception = (location != null) ? location.exception : null;
 
 			ArrayList<IDebugFrame> result = new ArrayList<>();

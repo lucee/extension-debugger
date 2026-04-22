@@ -5,6 +5,7 @@ import org.eclipse.lsp4j.debug.OutputEventArgumentsCategory;
 import org.eclipse.lsp4j.debug.services.IDebugProtocolClient;
 
 import lucee.loader.engine.CFMLEngineFactory;
+import lucee.runtime.exp.PageException;
 
 /**
  * Centralized logging for luceedebug.
@@ -253,8 +254,8 @@ public class Log {
 	 * back to the Java class simple name for anything else.
 	 */
 	private static String exceptionTypeName(Throwable t) {
-		if (t instanceof lucee.runtime.exp.PageException) {
-			lucee.runtime.exp.PageException pe = (lucee.runtime.exp.PageException) t;
+		if (t instanceof PageException) {
+			PageException pe = (PageException) t;
 			String type = pe.getTypeAsString();
 			if ("custom_type".equals(type) || "customtype".equals(type)) {
 				String custom = pe.getCustomTypeAsString();

@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.lang.ref.Cleaner;
 import java.lang.ref.WeakReference;
+import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
@@ -18,8 +19,19 @@ import com.sun.jdi.VirtualMachineManager;
 import com.sun.jdi.connect.AttachingConnector;
 
 import static lucee.loader.engine.CFMLEngine.DIALECT_CFML;
+import lucee.loader.engine.CFMLEngine;
+import lucee.loader.engine.CFMLEngineFactory;
 import lucee.runtime.PageContext;
+import lucee.runtime.engine.ThreadLocalPageContext;
 import lucee.runtime.exp.PageException;
+import lucee.runtime.functions.conversion.SerializeJSON;
+import lucee.runtime.functions.dynamicEvaluation.Evaluate;
+import lucee.runtime.functions.system.CFFunction;
+import lucee.runtime.op.Caster;
+import lucee.runtime.type.FunctionValueImpl;
+import lucee.runtime.type.util.KeyConstants;
+import lucee.runtime.util.ClassUtil;
+import lucee.runtime.util.PageContextUtil;
 import org.lucee.extension.debugger.Config;
 import org.lucee.extension.debugger.DapServer;
 import org.lucee.extension.debugger.Either;
@@ -175,7 +187,7 @@ public class DebugManager implements IDebugManager {
     /**
      * synchronized might be unnecessary here
      */
-    synchronized private lucee.runtime.PageContext maybeNull_findPageContext(ArrayList<Thread> suspendedThreads) {
+    synchronized private PageContext maybeNull_findPageContext(ArrayList<Thread> suspendedThreads) {
         final var pageContextRef = ((Supplier<WeakReference<PageContext>>) () -> {
             for (var thread : suspendedThreads) {
                 var pageContextRef_ = pageContextByThread.get(thread);
@@ -206,8 +218,8 @@ public class DebugManager implements IDebugManager {
         public static PageContextAndOutputStream ephemeralPageContextFromOther(PageContext pc) throws Exception {
             final var outputStream = new ByteArrayOutputStream();
 
-            lucee.loader.engine.CFMLEngine engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
-            lucee.runtime.util.ClassUtil classUtil = engine.getClassUtil();
+            CFMLEngine engine = CFMLEngineFactory.getInstance();
+            ClassUtil classUtil = engine.getClassUtil();
 
             Class<?> threadUtilClass = classUtil.loadClass("lucee.runtime.thread.ThreadUtil");
             Object emptyCookies = getEmptyCookieArray(classUtil);
@@ -234,16 +246,16 @@ public class DebugManager implements IDebugManager {
             return new PageContextAndOutputStream(freshEphemeralPageContext, outputStream);
         }
 
-        private static Object getEmptyCookieArray(lucee.runtime.util.ClassUtil classUtil) throws Exception {
+        private static Object getEmptyCookieArray(ClassUtil classUtil) throws Exception {
             try {
                 // jakarta first (Lucee 7+)
                 Class<?> cookieClass = classUtil.loadClass("jakarta.servlet.http.Cookie");
-                return java.lang.reflect.Array.newInstance(cookieClass, 0);
+                return Array.newInstance(cookieClass, 0);
             }
             catch (Exception e) {
                 // javax fallback (Lucee 5/6)
                 Class<?> cookieClass = classUtil.loadClass("javax.servlet.http.Cookie");
-                return java.lang.reflect.Array.newInstance(cookieClass, 0);
+                return Array.newInstance(cookieClass, 0);
             }
         }
     }
@@ -264,28 +276,28 @@ public class DebugManager implements IDebugManager {
                 final var freshEphemeralPageContext = ephemeralContext.pageContext;
                 final var outputStream = ephemeralContext.outStream;
 
-                lucee.runtime.engine.ThreadLocalPageContext.register(freshEphemeralPageContext);
+                ThreadLocalPageContext.register(freshEphemeralPageContext);
 
-                lucee.runtime.functions.system.CFFunction.call(
+                CFFunction.call(
                     freshEphemeralPageContext, new Object[]{
-                        lucee.runtime.type.FunctionValueImpl.newInstance(lucee.runtime.type.util.KeyConstants.___filename, "writeDump.cfm"),
-                        lucee.runtime.type.FunctionValueImpl.newInstance(lucee.runtime.type.util.KeyConstants.___name, "writeDump"),
-                        lucee.runtime.type.FunctionValueImpl.newInstance(lucee.runtime.type.util.KeyConstants.___isweb, Boolean.FALSE),
-                        lucee.runtime.type.FunctionValueImpl.newInstance(lucee.runtime.type.util.KeyConstants.___mapping, "/mapping-function"),
+                        FunctionValueImpl.newInstance(KeyConstants.___filename, "writeDump.cfm"),
+                        FunctionValueImpl.newInstance(KeyConstants.___name, "writeDump"),
+                        FunctionValueImpl.newInstance(KeyConstants.___isweb, Boolean.FALSE),
+                        FunctionValueImpl.newInstance(KeyConstants.___mapping, "/mapping-function"),
                         dumpable
                     });
 
                 freshEphemeralPageContext.flush();
                 result.value = wrapDumpInHtmlDoc(new String(outputStream.toByteArray(), "UTF-8"));
 
-                lucee.runtime.util.PageContextUtil.releasePageContext(
+                PageContextUtil.releasePageContext(
                     /*PageContext pc*/ freshEphemeralPageContext,
                     /*boolean register*/ true
                 );
 
                 outputStream.close();
 
-                lucee.runtime.engine.ThreadLocalPageContext.release();
+                ThreadLocalPageContext.release();
             }
             catch (Throwable e) {
                 // Log only - never kill the host JVM. The preset result.value fallback stands.
@@ -319,22 +331,22 @@ public class DebugManager implements IDebugManager {
                 final var freshEphemeralPageContext = ephemeralContext.pageContext;
                 final var outputStream = ephemeralContext.outStream;
 
-                lucee.runtime.engine.ThreadLocalPageContext.register(freshEphemeralPageContext);
+                ThreadLocalPageContext.register(freshEphemeralPageContext);
 
-                result.value = (String)lucee.runtime.functions.conversion.SerializeJSON.call(
+                result.value = (String)SerializeJSON.call(
                     /*PageContext pc*/ freshEphemeralPageContext,
                     /*Object var*/ dumpable,
                     /*Object queryFormat*/"struct"
                 );
 
-                lucee.runtime.util.PageContextUtil.releasePageContext(
+                PageContextUtil.releasePageContext(
                     /*PageContext pc*/ freshEphemeralPageContext,
                     /*boolean register*/ true
                 );
 
                 outputStream.close();
 
-                lucee.runtime.engine.ThreadLocalPageContext.release();
+                ThreadLocalPageContext.release();
             }
             catch (Throwable e) {
                 // Log only - never kill the host JVM. The preset result.value fallback stands.
@@ -396,14 +408,14 @@ public class DebugManager implements IDebugManager {
                             .getFrameContext()
                             .doWorkInThisFrame((Supplier<Either<String,Object>>)() -> {
                                 try {
-                                    lucee.runtime.engine.ThreadLocalPageContext.register(frame.getFrameContext().pageContext);
+                                    ThreadLocalPageContext.register(frame.getFrameContext().pageContext);
                                     return ExprEvaluator.eval(frame, expr);
                                 }
                                 catch (Throwable e) {
                                     return Either.Left(e.getMessage());
                                 }
                                 finally {
-                                    lucee.runtime.engine.ThreadLocalPageContext.release();
+                                    ThreadLocalPageContext.release();
                                 }
                             });
                     })
@@ -452,18 +464,18 @@ public class DebugManager implements IDebugManager {
                             .getFrameContext()
                             .doWorkInThisFrame((Supplier<Boolean>)() -> {
                                 try {
-                                    lucee.runtime.engine.ThreadLocalPageContext.register(frame.getFrameContext().pageContext);
-                                    Object obj = lucee.runtime.functions.dynamicEvaluation.Evaluate.call(
+                                    ThreadLocalPageContext.register(frame.getFrameContext().pageContext);
+                                    Object obj = Evaluate.call(
                                         frame.getFrameContext().pageContext,
                                         new String[]{expr}
                                     );
-                                    return lucee.runtime.op.Caster.toBoolean(obj);
+                                    return Caster.toBoolean(obj);
                                 }
                                 catch (PageException e) {
                                     return false;
                                 }
                                 finally {
-                                    lucee.runtime.engine.ThreadLocalPageContext.release();
+                                    ThreadLocalPageContext.release();
                                 }
                             });
                     })
@@ -773,7 +785,7 @@ public class DebugManager implements IDebugManager {
         return frame;
     }
 
-    public void pushCfFunctionDefaultValueInitializationFrame(lucee.runtime.PageContext pageContext, String sourceFilePath) {
+    public void pushCfFunctionDefaultValueInitializationFrame(PageContext pageContext, String sourceFilePath) {
         DebugFrame frame = maybe_pushCfFrame_worker(pageContext, sourceFilePath);
         if (frame instanceof Frame) {
             ((Frame)frame).isUdfDefaultValueInitFrame = true;

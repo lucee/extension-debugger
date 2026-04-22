@@ -1,9 +1,11 @@
 package org.lucee.extension.debugger.extension;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 
-import lucee.runtime.config.Config;
-
+import org.lucee.extension.debugger.Config;
 import org.lucee.extension.debugger.DapServer;
 import org.lucee.extension.debugger.EnvUtil;
 import org.lucee.extension.debugger.Log;
@@ -31,7 +33,7 @@ public class ExtensionActivator {
 	 * Lucee passes the Config object automatically.
 	 * May be called multiple times (ConfigServer + each ConfigWeb).
 	 */
-	public ExtensionActivator(Config luceeConfig) {
+	public ExtensionActivator(lucee.runtime.config.Config luceeConfig) {
 		// Only activate once
 		if (alreadyActivated) {
 			return;
@@ -55,10 +57,10 @@ public class ExtensionActivator {
 
 			// Determine filesystem case sensitivity from Lucee's config location
 			String configPath = luceeConfig.getConfigDir().getAbsolutePath();
-			boolean fsCaseSensitive = org.lucee.extension.debugger.Config.checkIfFileSystemIsCaseSensitive(configPath);
+			boolean fsCaseSensitive = Config.checkIfFileSystemIsCaseSensitive(configPath);
 
 			// Create luceedebug config
-			org.lucee.extension.debugger.Config config = new org.lucee.extension.debugger.Config(fsCaseSensitive);
+			Config config = new Config(fsCaseSensitive);
 
 			// Set Lucee classloader for reflection access to core classes
 			NativeLuceeVm.setLuceeClassLoader(luceeLoader);
@@ -70,7 +72,7 @@ public class ExtensionActivator {
 			// Listener registration is deferred until DAP client connects with secret
 			final int port = debugPort;
 			final String host = EnvUtil.getDebuggerHost();
-			final org.lucee.extension.debugger.Config finalConfig = config;
+			final Config finalConfig = config;
 		Thread dapThread = new Thread(() -> {
 			// Use System.out directly to ensure we see output even if Log class has issues
 			System.out.println("[luceedebug] DAP server thread started");
@@ -209,7 +211,7 @@ public class ExtensionActivator {
 			}
 
 			// Create ClassDefinition for DebuggerExecutionLog
-			java.lang.reflect.Constructor<?> cdConstructor = classDefImplClass.getConstructor(String.class);
+			Constructor<?> cdConstructor = classDefImplClass.getConstructor(String.class);
 			Object classDefinition = cdConstructor.newInstance("lucee.runtime.engine.DebuggerExecutionLog");
 
 			// Create empty Struct for arguments
@@ -265,7 +267,7 @@ public class ExtensionActivator {
 				pageContextClass, String.class, String.class, String.class, int.class);
 
 			// Create proxy in Lucee's classloader, delegating to extension's implementation
-			Object listenerProxy = java.lang.reflect.Proxy.newProxyInstance(
+			Object listenerProxy = Proxy.newProxyInstance(
 				luceeLoader,
 				new Class<?>[] { listenerInterface },
 				(proxy, method, args) -> {
@@ -281,7 +283,7 @@ public class ExtensionActivator {
 							case "onFunctionEntry": return onFunctionEntryMethod.invoke(null, args);
 							default: return null;
 						}
-					} catch (java.lang.reflect.InvocationTargetException e) {
+					} catch (InvocationTargetException e) {
 						Throwable cause = e.getCause();
 						Log.error("Proxy invocation failed for " + method.getName(), cause);
 						// Return safe defaults for boolean methods

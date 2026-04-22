@@ -1,5 +1,7 @@
 package org.lucee.extension.debugger;
 
+import java.lang.reflect.Field;
+
 /**
  * Utility class for reading environment variables and system properties
  * in Lucee's naming convention.
@@ -50,7 +52,7 @@ public final class EnvUtil {
 	public static boolean isDebuggerEnabled() {
 		try {
 			Class<?> configImpl = Class.forName("lucee.runtime.config.ConfigImpl");
-			java.lang.reflect.Field field = configImpl.getField("DEBUGGER");
+			Field field = configImpl.getField("DEBUGGER");
 			return (boolean) field.get(null);
 		} catch (Exception e) {
 			// Fallback to env var check if reflection fails (e.g. older Lucee)
