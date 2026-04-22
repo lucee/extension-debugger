@@ -310,8 +310,28 @@ jobs:
           # Run warmup first - this compiles everything then exits
           echo "Running Lucee warmup..."
           export LUCEE_ENABLE_WARMUP=true
-          ./bin/catalina.sh run
-          echo "Warmup complete"
+          mkdir -p logs
+          ./bin/catalina.sh run &
+          PID=$!
+          # Normal warmup: ~3s. If >90s, the JVM is hung (likely a non-daemon thread).
+          for i in $(seq 1 18); do
+            sleep 5
+            if ! kill -0 $PID 2>/dev/null; then
+              wait $PID; rc=$?
+              echo "Warmup complete (rc=$rc)"
+              exit $rc
+            fi
+          done
+          echo "=== WARMUP HANG DETECTED (>90s) - dumping threads ==="
+          JSTACK=$(which jstack || echo "$JAVA_HOME/bin/jstack")
+          $JSTACK -l $PID | tee logs/warmup-jstack-1.txt
+          sleep 10
+          echo "=== second thread dump 10s later ==="
+          $JSTACK -l $PID | tee logs/warmup-jstack-2.txt
+          kill -TERM $PID 2>/dev/null || true
+          sleep 5
+          kill -KILL $PID 2>/dev/null || true
+          exit 1
 
       - name: Start debuggee (Lucee Express)
         run: |
@@ -519,8 +539,28 @@ jobs:
           sed -i 's/port="8080"/port="8888"/g' conf/server.xml
           echo "Running Lucee warmup..."
           export LUCEE_ENABLE_WARMUP=true
-          ./bin/catalina.sh run
-          echo "Warmup complete"
+          mkdir -p logs
+          ./bin/catalina.sh run &
+          PID=$!
+          # Normal warmup: ~3s. If >90s, the JVM is hung (likely a non-daemon thread).
+          for i in $(seq 1 18); do
+            sleep 5
+            if ! kill -0 $PID 2>/dev/null; then
+              wait $PID; rc=$?
+              echo "Warmup complete (rc=$rc)"
+              exit $rc
+            fi
+          done
+          echo "=== WARMUP HANG DETECTED (>90s) - dumping threads ==="
+          JSTACK=$(which jstack || echo "$JAVA_HOME/bin/jstack")
+          $JSTACK -l $PID | tee logs/warmup-jstack-1.txt
+          sleep 10
+          echo "=== second thread dump 10s later ==="
+          $JSTACK -l $PID | tee logs/warmup-jstack-2.txt
+          kill -TERM $PID 2>/dev/null || true
+          sleep 5
+          kill -KILL $PID 2>/dev/null || true
+          exit 1
 
       - name: Start debuggee (Lucee Express)
         run: |
