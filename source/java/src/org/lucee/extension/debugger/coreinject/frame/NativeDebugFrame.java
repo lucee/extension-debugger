@@ -35,6 +35,8 @@ public class NativeDebugFrame implements IDebugFrame {
 	private static Field variablesField = null;
 	private static Field pageSourceField = null;
 	private static Field functionNameField = null;
+	private static Field kindField = null;
+	private static Object includeKindEnum = null;
 	private static Method getDisplayPathMethod = null;
 
 	private final Object nativeFrame; // PageContextImpl.DebuggerFrame (null for synthetic top-level frame)
@@ -42,6 +44,7 @@ public class NativeDebugFrame implements IDebugFrame {
 	private final ValTracker valTracker;
 	private final String sourceFilePath;
 	private final String functionName;
+	private final boolean isIncludeFrame;
 	private final long id;
 	private final int depth;
 	private int syntheticLine; // For synthetic frames only
@@ -70,7 +73,15 @@ public class NativeDebugFrame implements IDebugFrame {
 		this.variables = variablesField.get( nativeFrame );
 		Object pageSource = pageSourceField.get( nativeFrame );
 		this.sourceFilePath = (String) getDisplayPathMethod.invoke( pageSource );
-		this.functionName = (String) functionNameField.get( nativeFrame );
+
+		// INCLUDE frames have functionName=null in core; surface the included
+		// file's basename so the stack view reads as "widget.cfm" not "??".
+		this.isIncludeFrame = kindField.get( nativeFrame ) == includeKindEnum;
+		if ( isIncludeFrame ) {
+			this.functionName = new java.io.File( this.sourceFilePath ).getName();
+		} else {
+			this.functionName = (String) functionNameField.get( nativeFrame );
+		}
 	}
 
 	// Constructor for synthetic top-level frame (no DebuggerFrame exists)
@@ -82,6 +93,7 @@ public class NativeDebugFrame implements IDebugFrame {
 		this.depth = 0;
 		this.syntheticLine = line;
 		this.sourceFilePath = file;
+		this.isIncludeFrame = false;
 		this.exception = exception;
 
 		// Build frame name - use label if provided, otherwise try to get request URL
@@ -149,8 +161,9 @@ public class NativeDebugFrame implements IDebugFrame {
 		if ( functionName == null ) {
 			return "??";
 		}
-		// Don't add () for synthetic frames (start with < or /) or exception labels
-		if ( functionName.startsWith( "<" ) || functionName.startsWith( "/" ) || functionName.contains( ":" ) ) {
+		// Don't add () for INCLUDE frames (filename), synthetic frames (start
+		// with < or /), or exception labels (contain :).
+		if ( isIncludeFrame || functionName.startsWith( "<" ) || functionName.startsWith( "/" ) || functionName.contains( ":" ) ) {
 			return functionName;
 		}
 		return functionName + "()";
@@ -385,6 +398,17 @@ public class NativeDebugFrame implements IDebugFrame {
 			functionNameField = debuggerFrameClass.getField( "functionName" );
 			getLineMethod = debuggerFrameClass.getMethod( "getLine" );
 			setLineMethod = debuggerFrameClass.getMethod( "setLine", int.class );
+
+			// DebuggerFrame.Kind enum (Part A of LDEV-6274 synthetic-include spec).
+			// No fallback — if missing, outer catch disables native frame support.
+			Class<?> kindClass = cl.loadClass( "lucee.runtime.PageContextImpl$DebuggerFrame$Kind" );
+			kindField = debuggerFrameClass.getField( "kind" );
+			for ( Object constant : kindClass.getEnumConstants() ) {
+				if ( "INCLUDE".equals( constant.toString() ) ) {
+					includeKindEnum = constant;
+					break;
+				}
+			}
 
 			// Get PageSource.getDisplayPath method
 			Class<?> pageSourceClass = cl.loadClass( "lucee.runtime.PageSource" );

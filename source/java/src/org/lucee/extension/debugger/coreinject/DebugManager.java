@@ -522,17 +522,10 @@ public class DebugManager implements IDebugManager {
     }
 
     synchronized public IDebugFrame[] getCfStack(Thread thread) {
-        System.out.println("[luceedebug] getCfStack: looking for thread=" + thread.getName() + " (id=" + thread.getId() + ") identity=" + System.identityHashCode(thread));
-        System.out.println("[luceedebug] getCfStack: cfStackByThread has " + cfStackByThread.size() + " entries:");
-        for (var entry : cfStackByThread.entrySet()) {
-            Thread t = entry.getKey();
-            System.out.println("[luceedebug]   thread=" + t.getName() + " (id=" + t.getId() + ") identity=" + System.identityHashCode(t) + " frames=" + entry.getValue().size());
-        }
         ArrayList<DebugFrame> stack = cfStackByThread.get(thread);
 
         // Agent mode: only use bytecode-instrumented frames, no native fallback
         if (stack == null || stack.isEmpty()) {
-            System.out.println("[luceedebug] getCfStack: no instrumented frames for thread " + thread);
             return new Frame[0];
         }
 
@@ -542,11 +535,9 @@ public class DebugManager implements IDebugManager {
         // go backwards, "most recent first"
         for (int i = stack.size() - 1; i >= 0; --i) {
             DebugFrame frame = stack.get(i);
-            System.out.println("[luceedebug] getCfStack: frame[" + i + "] line=" + frame.getLine() + " source=" + frame.getSourceFilePath());
             if (frame.getLine() == 0) {
                 // Frame line not yet set - step notification hasn't run yet
                 // This can happen when breakpoint fires before first line executes
-                System.out.println("[luceedebug] getCfStack: skipping frame with line=0");
                 continue;
             }
             else {
@@ -738,8 +729,6 @@ public class DebugManager implements IDebugManager {
     }
 
     public void pushCfFrame(PageContext pageContext, String sourceFilePath) {
-        Thread t = Thread.currentThread();
-        System.out.println("[luceedebug] pushCfFrame: thread=" + t.getName() + " (id=" + t.getId() + ") identity=" + System.identityHashCode(t) + " file=" + sourceFilePath);
         maybe_pushCfFrame_worker(pageContext, sourceFilePath);
     }
     

@@ -146,8 +146,9 @@ function getArtifactPath( required string filename ) {
 	if ( len( variables.debuggeeArtifactPath ) ) {
 		return variables.debuggeeArtifactPath & arguments.filename;
 	}
+	// Repro folder reuses the shared test/cfml/artifacts/ tree two levels up.
 	var testDir = getDirectoryFromPath( getCurrentTemplatePath() );
-	return testDir & "artifacts/" & arguments.filename;
+	return testDir & "../../artifacts/" & arguments.filename;
 }
 
 function getArtifactUrl( required string filename ) {
@@ -170,7 +171,7 @@ function triggerArtifact( required string filename, struct params = {}, boolean 
 		var httpStart = getTickCount();
 		try {
 			systemOutput( "triggerArtifact: #attributes.requestUrl#", true );
-			http url="#attributes.requestUrl#" result="local.r" timeout=5 throwonerror=!attributes.allowErrors;
+			http url="#attributes.requestUrl#" result="local.r" timeout=10 throwonerror=!attributes.allowErrors;
 
 			httpResult.status = local.r.statusCode;
 			httpResult.content = local.r.fileContent;

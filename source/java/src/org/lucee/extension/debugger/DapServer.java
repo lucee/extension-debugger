@@ -220,12 +220,9 @@ public class DapServer implements IDebugProtocolServer {
 
             while (true) {
                 System.out.println("[luceedebug] Waiting for DAP client connection on " + host + ":" + port + "...");
-                System.out.println("[luceedebug] ServerSocket state: bound=" + server.isBound() + ", closed=" + server.isClosed() + ", localPort=" + server.getLocalPort());
                 logger.finest("listening for inbound debugger connection on " + host + ":" + port + "...");
 
-                System.out.println("[luceedebug] Calling server.accept()...");
                 var socket = server.accept();
-                System.out.println("[luceedebug] accept() returned!");
                 var clientAddr = socket.getInetAddress().getHostAddress();
                 var clientPort = socket.getPort();
 
