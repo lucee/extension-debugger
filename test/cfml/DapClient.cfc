@@ -84,9 +84,7 @@ component {
 		if ( len( arguments.logLevel ) ) {
 			args[ "logLevel" ] = arguments.logLevel;
 		}
-		if ( arguments.logExceptions ) {
-			args[ "logExceptions" ] = true;
-		}
+		args[ "logExceptions" ] = arguments.logExceptions;
 		var response = sendRequest( "attach", args );
 		// Wait for initialized event from server
 		waitForEvent( "initialized", 5000 );

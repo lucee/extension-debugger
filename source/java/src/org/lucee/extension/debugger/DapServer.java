@@ -943,7 +943,22 @@ public class DapServer implements IDebugProtocolServer {
 		Throwable ex = luceeVm_.getExceptionForThread(args.getThreadId());
 		var response = new ExceptionInfoResponse();
 		if (ex != null) {
-			response.setExceptionId(ex.getClass().getName());
+			// Prefer the CFML type over the Java class name. For cfthrow
+			// type="TestException" the underlying PageException carries
+			// type="custom_type" + customType="TestException", so we unwrap that;
+			// for other PageExceptions the type string itself is what we want.
+			String cfmlType = null;
+			if (ex instanceof lucee.runtime.exp.PageException) {
+				lucee.runtime.exp.PageException pe = (lucee.runtime.exp.PageException) ex;
+				String t = pe.getTypeAsString();
+				if ("custom_type".equals(t) || "customtype".equals(t)) {
+					cfmlType = pe.getCustomTypeAsString();
+				} else {
+					cfmlType = t;
+				}
+				if (cfmlType != null && cfmlType.isEmpty()) cfmlType = null;
+			}
+			response.setExceptionId(cfmlType != null ? cfmlType : ex.getClass().getName());
 			response.setDescription(ex.getMessage());
 			response.setBreakMode(ExceptionBreakMode.UNHANDLED);
 			// Build detailed stack trace
