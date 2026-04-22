@@ -73,7 +73,15 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				teardownDap();
 			} );
 
-			it( title="validates line numbers in stepping-target", skip=notSupportsBreakpointLocations(), body=function() {
+			// Runtime guard, not skip= — skip= evaluates at spec-register time, before
+			// beforeEach sets up the DAP connection, so capabilities() would be nil.
+			// See DelayedVerifyTest.cfc:44-48 and feedback_testbox_style memory.
+			it( "native: validates line numbers in stepping-target", function() {
+				if ( !supportsBreakpointLocations() ) {
+					systemOutput( "skipping: breakpointLocations not supported", true );
+					return;
+				}
+
 				var locations = dap.breakpointLocations( variables.targetFile, 1, 35 );
 				var validLines = locations.body.breakpoints.map( function( bp ) { return bp.line; } );
 

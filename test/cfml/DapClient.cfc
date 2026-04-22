@@ -204,6 +204,10 @@ component {
 		} );
 	}
 
+	public struct function getApplicationSettings() {
+		return sendRequest( "getApplicationSettings", {} );
+	}
+
 	public struct function setVariable( required numeric variablesReference, required string name, required string value ) {
 		return sendRequest( "setVariable", {
 			"variablesReference": arguments.variablesReference,

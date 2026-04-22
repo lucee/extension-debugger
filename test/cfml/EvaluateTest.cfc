@@ -1,5 +1,7 @@
 /**
  * Tests for evaluate/expression functionality.
+ *
+ * BDD style — runtime guards inside each `it`.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -7,8 +9,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 	variables.targetFile = "";
 
-	// Line numbers in evaluate-target.cfm - keep in sync with the file
-	// These are validated in testValidateLineNumbers() using breakpointLocations (native mode only)
+	// Line numbers in evaluate-target.cfm — keep in sync with the file.
 	variables.lines = {
 		debugLine: 26  // return localVar & " - " & dataName;
 	};
@@ -18,229 +19,270 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 		variables.targetFile = getArtifactPath( "evaluate-target.cfm" );
 	}
 
-	// Validate our line number assumptions using breakpointLocations (native mode only)
-	function testValidateLineNumbers_evaluateTarget() skip="notSupportsBreakpointLocations" {
-		var locations = dap.breakpointLocations( variables.targetFile, 1, 40 );
-		var validLines = locations.body.breakpoints.map( function( bp ) { return bp.line; } );
+	function run( testResults, testBox ) {
+		describe( "DAP evaluate", function() {
 
-		systemOutput( "#variables.targetFile# valid lines: #serializeJSON( validLines )#", true );
+			beforeEach( function() {
+				dap.drainEvents();
+			} );
 
-		for ( var key in variables.lines ) {
-			var line = variables.lines[ key ];
-			expect( validLines ).toInclude( line, "#variables.targetFile# line #line# (#key#) should be a valid breakpoint location" );
-		}
+			afterEach( function() {
+				clearBreakpoints( variables.targetFile );
+
+				for ( var threadId in dap.getSuspendedThreadIds() ) {
+					try {
+						dap.continueThread( threadId );
+					} catch ( any e ) {
+						systemOutput( "afterEach: continue thread #threadId# ignored: #e.message#", true );
+					}
+				}
+
+				try {
+					waitForHttpComplete( 3000 );
+				} catch ( any e ) {
+					systemOutput( "afterEach: http drain timeout ignored: #e.message#", true );
+				}
+
+				dap.drainEvents();
+			} );
+
+			it( "native: target debugLine is a valid breakpoint location", function() {
+				if ( !supportsBreakpointLocations() ) {
+					systemOutput( "skipping: breakpointLocations not supported", true );
+					return;
+				}
+
+				var locations = dap.breakpointLocations( variables.targetFile, 1, 40 );
+				var validLines = locations.body.breakpoints.map( function( bp ) { return bp.line; } );
+
+				systemOutput( "#variables.targetFile# valid lines: #serializeJSON( validLines )#", true );
+
+				for ( var key in variables.lines ) {
+					var line = variables.lines[ key ];
+					expect( validLines ).toInclude( line, "#variables.targetFile# line #line# (#key#) should be a valid breakpoint location" );
+				}
+			} );
+
+			it( "evaluates a simple arithmetic expression", function() {
+				if ( !supportsEvaluate() ) {
+					systemOutput( "skipping: evaluate not supported", true );
+					return;
+				}
+
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "evaluate-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+				var frame = getTopFrame( threadId );
+
+				var evalResponse = dap.evaluate( frame.id, "1 + 1" );
+
+				expect( evalResponse.body.result ).toBe( "2" );
+
+				cleanupThread( threadId );
+			} );
+
+			it( "evaluates a local string variable", function() {
+				if ( !supportsEvaluate() ) {
+					systemOutput( "skipping: evaluate not supported", true );
+					return;
+				}
+
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "evaluate-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+				var frame = getTopFrame( threadId );
+
+				var evalResponse = dap.evaluate( frame.id, "localVar" );
+
+				expect( evalResponse.body.result ).toBe( '"local-value"' );
+
+				cleanupThread( threadId );
+			} );
+
+			it( "evaluates a local numeric variable", function() {
+				if ( !supportsEvaluate() ) {
+					systemOutput( "skipping: evaluate not supported", true );
+					return;
+				}
+
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "evaluate-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+				var frame = getTopFrame( threadId );
+
+				var evalResponse = dap.evaluate( frame.id, "localNum" );
+
+				expect( evalResponse.body.result ).toBe( "100" );
+
+				cleanupThread( threadId );
+			} );
+
+			it( "evaluates a struct key access (localStruct.key1)", function() {
+				if ( !supportsEvaluate() ) {
+					systemOutput( "skipping: evaluate not supported", true );
+					return;
+				}
+
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "evaluate-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+				var frame = getTopFrame( threadId );
+
+				var evalResponse = dap.evaluate( frame.id, "localStruct.key1" );
+
+				expect( evalResponse.body.result ).toBe( '"value1"' );
+
+				cleanupThread( threadId );
+			} );
+
+			it( "evaluates a nested struct key (localStruct.nested.inner)", function() {
+				if ( !supportsEvaluate() ) {
+					systemOutput( "skipping: evaluate not supported", true );
+					return;
+				}
+
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "evaluate-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+				var frame = getTopFrame( threadId );
+
+				var evalResponse = dap.evaluate( frame.id, "localStruct.nested.inner" );
+
+				expect( evalResponse.body.result ).toBe( '"deep"' );
+
+				cleanupThread( threadId );
+			} );
+
+			it( "evaluates an array element access (localArray[2])", function() {
+				if ( !supportsEvaluate() ) {
+					systemOutput( "skipping: evaluate not supported", true );
+					return;
+				}
+
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "evaluate-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+				var frame = getTopFrame( threadId );
+
+				var evalResponse = dap.evaluate( frame.id, "localArray[2]" );
+
+				expect( evalResponse.body.result ).toBe( "20" );
+
+				cleanupThread( threadId );
+			} );
+
+			it( "evaluates arguments-scope access (arguments.data.name)", function() {
+				if ( !supportsEvaluate() ) {
+					systemOutput( "skipping: evaluate not supported", true );
+					return;
+				}
+
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "evaluate-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+				var frame = getTopFrame( threadId );
+
+				var evalResponse = dap.evaluate( frame.id, "arguments.data.name" );
+
+				expect( evalResponse.body.result ).toBe( '"test-input"' );
+
+				cleanupThread( threadId );
+			} );
+
+			it( "evaluates a string concatenation expression", function() {
+				if ( !supportsEvaluate() ) {
+					systemOutput( "skipping: evaluate not supported", true );
+					return;
+				}
+
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "evaluate-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+				var frame = getTopFrame( threadId );
+
+				var evalResponse = dap.evaluate( frame.id, "localVar & ' - ' & dataName" );
+
+				expect( evalResponse.body.result ).toBe( '"local-value - test-input"' );
+
+				cleanupThread( threadId );
+			} );
+
+			it( "evaluates a math expression with variables", function() {
+				if ( !supportsEvaluate() ) {
+					systemOutput( "skipping: evaluate not supported", true );
+					return;
+				}
+
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "evaluate-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+				var frame = getTopFrame( threadId );
+
+				var evalResponse = dap.evaluate( frame.id, "localNum * 2 + 50" );
+
+				expect( evalResponse.body.result ).toBe( "250" );
+
+				cleanupThread( threadId );
+			} );
+
+			it( "evaluates a built-in function call (len)", function() {
+				if ( !supportsEvaluate() ) {
+					systemOutput( "skipping: evaluate not supported", true );
+					return;
+				}
+
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "evaluate-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+				var frame = getTopFrame( threadId );
+
+				var evalResponse = dap.evaluate( frame.id, "len(localVar)" );
+
+				expect( evalResponse.body.result ).toBe( "11" ); // "local-value" = 11 chars
+
+				cleanupThread( threadId );
+			} );
+
+			it( "evaluates arrayLen on a local array", function() {
+				if ( !supportsEvaluate() ) {
+					systemOutput( "skipping: evaluate not supported", true );
+					return;
+				}
+
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "evaluate-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+				var frame = getTopFrame( threadId );
+
+				var evalResponse = dap.evaluate( frame.id, "arrayLen(localArray)" );
+
+				expect( evalResponse.body.result ).toBe( "3" );
+
+				cleanupThread( threadId );
+			} );
+
+		} );
 	}
-
-	function afterEach() {
-		clearBreakpoints( variables.targetFile );
-	}
-
-	// ========== Basic Evaluate ==========
-
-	function testEvaluateSimpleExpression() skip="notSupportsEvaluate" {
-		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
-
-		triggerArtifact( "evaluate-target.cfm" );
-
-		var stopped = dap.waitForEvent( "stopped", 2000 );
-		var threadId = stopped.body.threadId;
-
-		var frame = getTopFrame( threadId );
-
-		// Evaluate a simple expression
-		var evalResponse = dap.evaluate( frame.id, "1 + 1" );
-
-		expect( evalResponse.body.result ).toBe( "2" );
-
-		cleanupThread( threadId );
-	}
-
-	function testEvaluateLocalVariable() skip="notSupportsEvaluate" {
-		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
-
-		triggerArtifact( "evaluate-target.cfm" );
-
-		var stopped = dap.waitForEvent( "stopped", 2000 );
-		var threadId = stopped.body.threadId;
-
-		var frame = getTopFrame( threadId );
-
-		// Evaluate local variable
-		var evalResponse = dap.evaluate( frame.id, "localVar" );
-
-		expect( evalResponse.body.result ).toBe( '"local-value"' );
-
-		cleanupThread( threadId );
-	}
-
-	function testEvaluateNumericVariable() skip="notSupportsEvaluate" {
-		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
-
-		triggerArtifact( "evaluate-target.cfm" );
-
-		var stopped = dap.waitForEvent( "stopped", 2000 );
-		var threadId = stopped.body.threadId;
-
-		var frame = getTopFrame( threadId );
-
-		// Evaluate numeric variable
-		var evalResponse = dap.evaluate( frame.id, "localNum" );
-
-		expect( evalResponse.body.result ).toBe( "100" );
-
-		cleanupThread( threadId );
-	}
-
-	// ========== Struct/Array Access ==========
-
-	function testEvaluateStructKey() skip="notSupportsEvaluate" {
-		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
-
-		triggerArtifact( "evaluate-target.cfm" );
-
-		var stopped = dap.waitForEvent( "stopped", 2000 );
-		var threadId = stopped.body.threadId;
-
-		var frame = getTopFrame( threadId );
-
-		// Evaluate struct key access
-		var evalResponse = dap.evaluate( frame.id, "localStruct.key1" );
-
-		expect( evalResponse.body.result ).toBe( '"value1"' );
-
-		cleanupThread( threadId );
-	}
-
-	function testEvaluateNestedStructKey() skip="notSupportsEvaluate" {
-		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
-
-		triggerArtifact( "evaluate-target.cfm" );
-
-		var stopped = dap.waitForEvent( "stopped", 2000 );
-		var threadId = stopped.body.threadId;
-
-		var frame = getTopFrame( threadId );
-
-		// Evaluate nested struct access
-		var evalResponse = dap.evaluate( frame.id, "localStruct.nested.inner" );
-
-		expect( evalResponse.body.result ).toBe( '"deep"' );
-
-		cleanupThread( threadId );
-	}
-
-	function testEvaluateArrayElement() skip="notSupportsEvaluate" {
-		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
-
-		triggerArtifact( "evaluate-target.cfm" );
-
-		var stopped = dap.waitForEvent( "stopped", 2000 );
-		var threadId = stopped.body.threadId;
-
-		var frame = getTopFrame( threadId );
-
-		// Evaluate array element
-		var evalResponse = dap.evaluate( frame.id, "localArray[2]" );
-
-		expect( evalResponse.body.result ).toBe( "20" );
-
-		cleanupThread( threadId );
-	}
-
-	// ========== Function Arguments ==========
-
-	function testEvaluateArgumentsScope() skip="notSupportsEvaluate" {
-		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
-
-		triggerArtifact( "evaluate-target.cfm" );
-
-		var stopped = dap.waitForEvent( "stopped", 2000 );
-		var threadId = stopped.body.threadId;
-
-		var frame = getTopFrame( threadId );
-
-		// Evaluate argument access
-		var evalResponse = dap.evaluate( frame.id, "arguments.data.name" );
-
-		expect( evalResponse.body.result ).toBe( '"test-input"' );
-
-		cleanupThread( threadId );
-	}
-
-	// ========== Expressions ==========
-
-	function testEvaluateStringConcatenation() skip="notSupportsEvaluate" {
-		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
-
-		triggerArtifact( "evaluate-target.cfm" );
-
-		var stopped = dap.waitForEvent( "stopped", 2000 );
-		var threadId = stopped.body.threadId;
-
-		var frame = getTopFrame( threadId );
-
-		// Evaluate string concatenation
-		var evalResponse = dap.evaluate( frame.id, "localVar & ' - ' & dataName" );
-
-		expect( evalResponse.body.result ).toBe( '"local-value - test-input"' );
-
-		cleanupThread( threadId );
-	}
-
-	function testEvaluateMathExpression() skip="notSupportsEvaluate" {
-		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
-
-		triggerArtifact( "evaluate-target.cfm" );
-
-		var stopped = dap.waitForEvent( "stopped", 2000 );
-		var threadId = stopped.body.threadId;
-
-		var frame = getTopFrame( threadId );
-
-		// Evaluate math expression
-		var evalResponse = dap.evaluate( frame.id, "localNum * 2 + 50" );
-
-		expect( evalResponse.body.result ).toBe( "250" );
-
-		cleanupThread( threadId );
-	}
-
-	// ========== Built-in Functions ==========
-
-	function testEvaluateBuiltInFunction() skip="notSupportsEvaluate" {
-		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
-
-		triggerArtifact( "evaluate-target.cfm" );
-
-		var stopped = dap.waitForEvent( "stopped", 2000 );
-		var threadId = stopped.body.threadId;
-
-		var frame = getTopFrame( threadId );
-
-		// Evaluate built-in function
-		var evalResponse = dap.evaluate( frame.id, "len(localVar)" );
-
-		expect( evalResponse.body.result ).toBe( "11" ); // "local-value" = 11 chars
-
-		cleanupThread( threadId );
-	}
-
-	function testEvaluateArrayLen() skip="notSupportsEvaluate" {
-		dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
-
-		triggerArtifact( "evaluate-target.cfm" );
-
-		var stopped = dap.waitForEvent( "stopped", 2000 );
-		var threadId = stopped.body.threadId;
-
-		var frame = getTopFrame( threadId );
-
-		// Evaluate array length
-		var evalResponse = dap.evaluate( frame.id, "arrayLen(localArray)" );
-
-		expect( evalResponse.body.result ).toBe( "3" );
-
-		cleanupThread( threadId );
-	}
-
 }
