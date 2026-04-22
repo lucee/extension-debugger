@@ -457,19 +457,15 @@ public class NativeDebugFrame implements IDebugFrame {
 			var location = org.lucee.extension.debugger.coreinject.NativeDebuggerListener.getSuspendLocation( threadId );
 			Throwable exception = (location != null) ? location.exception : null;
 
-			// Convert to IDebugFrame array, filtering frames with line 0
 			ArrayList<IDebugFrame> result = new ArrayList<>();
 
 			if ( nativeFrames != null && nativeFrames.length > 0 ) {
-				// Native frames are in push order (oldest first), DAP expects newest first
+				// Native frames are in push order (oldest first), DAP expects newest first.
+				// Don't filter line-0 frames: at function-breakpoint entry the just-pushed
+				// UDF frame legitimately has line=0 until DebuggerExecutionLog advances it,
+				// and dropping it loses the function name the test/UI needs to show.
 				for ( int i = nativeFrames.length - 1; i >= 0; i-- ) {
 					Object nf = nativeFrames[i];
-					int line = (int) getLineMethod.invoke( nf );
-
-					// Skip frames with line 0 (not yet stepped into)
-					if ( line == 0 ) {
-						continue;
-					}
 
 					// Only pass exception to the topmost frame (first one added to result)
 					Throwable frameException = result.isEmpty() ? exception : null;

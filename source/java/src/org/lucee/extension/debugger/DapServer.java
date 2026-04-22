@@ -129,9 +129,15 @@ public class DapServer implements IDebugProtocolServer {
             // This is different from JDWP breakpoints which use JDWP thread IDs
             final int i32_threadID = (int)(long)javaThreadId;
             var event = new StoppedEventArguments();
-            event.setReason("breakpoint");
+            // Lucee's debuggerSuspend label is "function breakpoint: <name>" for function
+            // breakpoints, otherwise it's either null (line breakpoint) or a user-supplied
+            // label from a programmatic breakpoint() call.
+            if (label != null && label.startsWith("function breakpoint")) {
+                event.setReason("function breakpoint");
+            } else {
+                event.setReason("breakpoint");
+            }
             event.setThreadId(i32_threadID);
-            // Set label as description if provided (from programmatic breakpoint("label") calls)
             if (label != null && !label.isEmpty()) {
                 event.setDescription(label);
             }
@@ -876,7 +882,7 @@ public class DapServer implements IDebugProtocolServer {
 
 		// Only works in native mode - NativeDebuggerListener doesn't exist in agent mode
 		if (!(luceeVm_ instanceof NativeLuceeVm)) {
-			return CompletableFuture.completedFuture(new SetFunctionBreakpointsResponse());
+			return CompletableFuture.completedFuture(emptyFunctionBreakpointsResponse());
 		}
 
 		FunctionBreakpoint[] bps = args.getBreakpoints();
@@ -884,7 +890,7 @@ public class DapServer implements IDebugProtocolServer {
 
 		if (bps == null || bps.length == 0) {
 			NativeDebuggerListener.clearFunctionBreakpoints();
-			return CompletableFuture.completedFuture(new SetFunctionBreakpointsResponse());
+			return CompletableFuture.completedFuture(emptyFunctionBreakpointsResponse());
 		}
 
 		String[] names = new String[bps.length];
@@ -912,6 +918,17 @@ public class DapServer implements IDebugProtocolServer {
 		SetFunctionBreakpointsResponse response = new SetFunctionBreakpointsResponse();
 		response.setBreakpoints(result);
 		return CompletableFuture.completedFuture(response);
+	}
+
+	/**
+	 * DAP requires the breakpoints array to be present on the response, even when empty.
+	 * Clients deserialize it directly as `response.body.breakpoints`; an absent field raises
+	 * a "key [BREAKPOINTS] doesn't exist" error on the CFML side.
+	 */
+	private static SetFunctionBreakpointsResponse emptyFunctionBreakpointsResponse() {
+		SetFunctionBreakpointsResponse response = new SetFunctionBreakpointsResponse();
+		response.setBreakpoints(new Breakpoint[0]);
+		return response;
 	}
 
 	/**
