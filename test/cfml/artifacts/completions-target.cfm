@@ -18,6 +18,7 @@ function testCompletions() {
 	};
 	var myArray = [ 1, 2, 3 ];
 	var myQuery = queryNew( "id,name", "integer,varchar", [ { id: 1, name: "test" } ] );
+	var myComponent = createObject( "component", "SampleComponent" );
 
 	var stopHere = true;
 

@@ -1,17 +1,35 @@
 package org.lucee.extension.debugger.coreinject;
 
 import java.lang.ref.Cleaner;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
+import org.eclipse.lsp4j.debug.CompletionItem;
+import org.eclipse.lsp4j.debug.CompletionItemType;
+
+import lucee.loader.engine.CFMLEngine;
+import lucee.loader.engine.CFMLEngineFactory;
+import lucee.loader.engine.CFMLEngineWrapper;
+import lucee.runtime.CFMLFactory;
+import lucee.runtime.CFMLFactoryImpl;
 import lucee.runtime.PageContext;
+import lucee.runtime.PageContextImpl;
 import lucee.runtime.dump.DumpData;
 import lucee.runtime.dump.DumpProperties;
 import lucee.runtime.dump.DumpUtil;
 import lucee.runtime.dump.DumpWriter;
+import lucee.runtime.engine.CFMLEngineImpl;
+import lucee.runtime.engine.ThreadLocalPageContext;
+import lucee.runtime.ext.function.BIF;
 
 import org.lucee.extension.debugger.*;
 import org.lucee.extension.debugger.coreinject.frame.NativeDebugFrame;
@@ -42,8 +60,12 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	private AtomicInteger breakpointID = new AtomicInteger();
 
-	// Cache of frame ID -> frame for scope/variable lookups
+	// Cache of frame ID -> frame for scope/variable lookups.
+	// Side map tracks which frame IDs belong to each suspended thread so we
+	// can evict them on resume — otherwise frameCache grows unbounded and
+	// cross-thread iterations hand back stale PCs from prior suspensions.
 	private final ConcurrentHashMap<Long, IDebugFrame> frameCache = new ConcurrentHashMap<>();
+	private final ConcurrentHashMap<Long, long[]> frameIdsByThreadId = new ConcurrentHashMap<>();
 
 	/**
 	 * Set the Lucee classloader for reflection access to Lucee core classes.
@@ -125,7 +147,7 @@ public class NativeLuceeVm implements ILuceeVm {
 	@Override
 	public ThreadInfo[] getThreadListing() {
 		var result = new ArrayList<ThreadInfo>();
-		var seenThreadIds = new java.util.HashSet<Long>();
+		var seenThreadIds = new HashSet<Long>();
 
 		// First, add any suspended threads (these are most important for debugging)
 		for (Long threadId : NativeDebuggerListener.getSuspendedThreadIds()) {
@@ -137,38 +159,19 @@ public class NativeLuceeVm implements ILuceeVm {
 		}
 
 		try {
-			// Get CFMLEngine via the loader's factory (available to extension classloader)
-			Object engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
+			// CFMLEngineFactory.getInstance() returns the wrapper; unwrap to the impl,
+			// which exposes getCFMLFactories(). Mirrors Lucee core's own usage at
+			// FDControllerImpl.java:103 in 7.1.
+			CFMLEngineWrapper wrapper = (CFMLEngineWrapper) CFMLEngineFactory.getInstance();
+			CFMLEngineImpl engine = (CFMLEngineImpl) wrapper.getEngine();
 
-			// The factory returns CFMLEngineWrapper - unwrap to get CFMLEngineImpl
-			java.lang.reflect.Method getEngineMethod = engine.getClass().getMethod("getEngine");
-			Object engineImpl = getEngineMethod.invoke(engine);
-
-			// Get all CFMLFactory instances from the engine impl
-			// CFMLEngineImpl has getCFMLFactories() returning Map<String, CFMLFactory>
-			java.lang.reflect.Method getFactoriesMethod = engineImpl.getClass().getMethod("getCFMLFactories");
-			@SuppressWarnings("unchecked")
-			java.util.Map<String, ?> factoriesMap = (java.util.Map<String, ?>) getFactoriesMethod.invoke(engineImpl);
-			Object[] factories = factoriesMap.values().toArray();
-
-			for (Object factory : factories) {
+			for (CFMLFactory factory : engine.getCFMLFactories().values()) {
 				try {
-					// Call getActivePageContexts() - it's in CFMLFactoryImpl
-					java.lang.reflect.Method getActiveMethod = factory.getClass().getMethod("getActivePageContexts");
-					@SuppressWarnings("unchecked")
-					java.util.Map<Integer, ?> activeContexts = (java.util.Map<Integer, ?>) getActiveMethod.invoke(factory);
-
-					// Each PageContext has a getThread() method
-					for (Object pc : activeContexts.values()) {
-						try {
-							java.lang.reflect.Method getThreadMethod = pc.getClass().getMethod("getThread");
-							Thread thread = (Thread) getThreadMethod.invoke(pc);
-							if (thread != null && !seenThreadIds.contains(thread.getId())) {
-								result.add(new ThreadInfo(thread.getId(), thread.getName()));
-								seenThreadIds.add(thread.getId());
-							}
-						} catch (Exception e) {
-							// Skip this context if we can't get its thread
+					for (PageContextImpl pc : ((CFMLFactoryImpl) factory).getActivePageContexts().values()) {
+						Thread thread = pc.getThread();
+						if (thread != null && !seenThreadIds.contains(thread.getId())) {
+							result.add(new ThreadInfo(thread.getId(), thread.getName()));
+							seenThreadIds.add(thread.getId());
 						}
 					}
 				} catch (Exception e) {
@@ -207,13 +210,31 @@ public class NativeLuceeVm implements ILuceeVm {
 			return new IDebugFrame[0];
 		}
 
-		// Cache frames for later scope/variable lookups
-		for (IDebugFrame frame : frames) {
-			frameCache.put(frame.getId(), frame);
+		// Cache frames for later scope/variable lookups, replacing any frames
+		// we cached for a prior suspension of this same thread (a thread can
+		// only be suspended at one location at a time).
+		evictFramesForThread(threadID);
+		long[] ids = new long[frames.length];
+		for (int i = 0; i < frames.length; i++) {
+			frameCache.put(frames[i].getId(), frames[i]);
+			ids[i] = frames[i].getId();
 		}
+		frameIdsByThreadId.put(threadID, ids);
 
 		Log.trace("getStackTrace: returning " + frames.length + " frames for thread " + threadID);
 		return frames;
+	}
+
+	/**
+	 * Remove this thread's cached frames from frameCache so they can't be
+	 * returned to clients (by frameId lookup or iteration) after the thread
+	 * has resumed.
+	 */
+	private void evictFramesForThread(long threadID) {
+		long[] ids = frameIdsByThreadId.remove(threadID);
+		if (ids != null) {
+			for (long id : ids) frameCache.remove(id);
+		}
 	}
 
 	private Thread findThreadById(long threadId) {
@@ -276,7 +297,7 @@ public class NativeLuceeVm implements ILuceeVm {
 
 		// Get executable lines to validate breakpoints
 		int[] executableLines = getExecutableLines(serverPath.get());
-		java.util.Set<Integer> validLines = new java.util.HashSet<>();
+		Set<Integer> validLines = new HashSet<>();
 		for (int line : executableLines) {
 			validLines.add(line);
 		}
@@ -309,11 +330,14 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	@Override
 	public void continue_(long threadID) {
+		evictFramesForThread(threadID);
 		NativeDebuggerListener.resumeNativeThread(threadID);
 	}
 
 	@Override
 	public void continueAll() {
+		frameCache.clear();
+		frameIdsByThreadId.clear();
 		NativeDebuggerListener.resumeAllNativeThreads();
 	}
 
@@ -385,12 +409,10 @@ public class NativeLuceeVm implements ILuceeVm {
 
 		// Fallback: try any suspended frame's PageContext
 		if (pc == null) {
-			for (IDebugFrame frame : frameCache.values()) {
-				if (frame instanceof NativeDebugFrame) {
-					pc = ((NativeDebugFrame) frame).getPageContext();
-					if (pc != null) break;
-				}
-			}
+			// Fall back to the PC of whichever thread is currently suspended.
+			// Can't scan frameCache: may contain stale frames from a prior
+			// suspension and would hand back the wrong PC.
+			pc = NativeDebuggerListener.getAnySuspendedPageContext();
 		}
 
 		if (pc == null) {
@@ -413,26 +435,19 @@ public class NativeLuceeVm implements ILuceeVm {
 
 		Thread thread = new Thread(() -> {
 			try {
-				ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
-
-				// Register the existing PageContext with ThreadLocal
-				Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
-				java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
-				java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
-				registerMethod.invoke(null, pc);
-
+				ThreadLocalPageContext.register(pc);
 				try {
 					// loadBIF with the short function name resolves via Lucee's FunctionLib
 					// instead of the OSGi classloader, so we don't need the bundle to
 					// self-import lucee.runtime.functions.system.
-					lucee.loader.engine.CFMLEngine engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
-					lucee.runtime.ext.function.BIF getMetaDataBif = engine.getClassUtil().loadBIF(pc, "getMetaData");
+					CFMLEngine engine = CFMLEngineFactory.getInstance();
+					BIF getMetaDataBif = engine.getClassUtil().loadBIF(pc, "getMetaData");
 					Object metadata = getMetaDataBif.invoke(pc, new Object[] { obj });
 
-					lucee.runtime.ext.function.BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
+					BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
 					result.value = (String) serializeJsonBif.invoke(pc, new Object[] { metadata, "struct" });
 				} finally {
-					releaseMethod.invoke(null);
+					ThreadLocalPageContext.release();
 				}
 			} catch (Throwable e) {
 				Log.debug("getMetadata failed: " + e.getMessage());
@@ -480,12 +495,10 @@ public class NativeLuceeVm implements ILuceeVm {
 
 		// If no PageContext from frame, try to find any suspended frame's PageContext
 		if (pc == null) {
-			for (IDebugFrame frame : frameCache.values()) {
-				if (frame instanceof NativeDebugFrame) {
-					pc = ((NativeDebugFrame) frame).getPageContext();
-					if (pc != null) break;
-				}
-			}
+			// Fall back to the PC of whichever thread is currently suspended.
+			// Can't scan frameCache: may contain stale frames from a prior
+			// suspension and would hand back the wrong PC.
+			pc = NativeDebuggerListener.getAnySuspendedPageContext();
 		}
 
 		if (pc == null) {
@@ -508,25 +521,18 @@ public class NativeLuceeVm implements ILuceeVm {
 
 		Thread thread = new Thread(() -> {
 			try {
-				ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
-
-				// Register the existing PageContext with ThreadLocal
-				Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
-				java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
-				java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
-				registerMethod.invoke(null, pc);
-
+				ThreadLocalPageContext.register(pc);
 				try {
 					if (asJson) {
 						// Resolve via FunctionLib by short name (see doGetMetadataWithPageContext).
-						lucee.loader.engine.CFMLEngine engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
-						lucee.runtime.ext.function.BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
+						CFMLEngine engine = CFMLEngineFactory.getInstance();
+						BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
 						result.value = (String) serializeJsonBif.invoke(pc, new Object[] { dumpable, "struct" });
 					} else {
 						result.value = wrapDumpInHtmlDoc(dumpObjectAsHtml(pc, dumpable));
 					}
 				} finally {
-					releaseMethod.invoke(null);
+					ThreadLocalPageContext.release();
 				}
 			} catch (Throwable e) {
 				Log.debug("dump failed: " + e.getMessage());
@@ -583,19 +589,14 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	@Override
 	public String getApplicationSettings() {
-		// Get PageContext from any suspended frame
-		PageContext pc = null;
-		for (IDebugFrame frame : frameCache.values()) {
-			if (frame instanceof NativeDebugFrame) {
-				pc = ((NativeDebugFrame) frame).getPageContext();
-				if (pc != null) break;
-			}
-		}
-
+		// Must read from the suspended-threads map, not frameCache: frameCache
+		// accumulates frames across suspensions and would hand back a stale PC
+		// whose applicationContext field was never populated (or populated for
+		// a different request's app context).
+		PageContext pc = NativeDebuggerListener.getAnySuspendedPageContext();
 		if (pc == null) {
 			return "\"No PageContext available\"";
 		}
-
 		return doGetApplicationSettingsWithPageContext(pc);
 	}
 
@@ -611,27 +612,18 @@ public class NativeLuceeVm implements ILuceeVm {
 
 		Thread thread = new Thread(() -> {
 			try {
-				ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
-
-				// Register the existing PageContext with ThreadLocal
-				Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
-				java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
-				java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
-				registerMethod.invoke(null, pc);
-
+				ThreadLocalPageContext.register(pc);
 				try {
-					// Call GetApplicationSettings.call(PageContext)
-					Class<?> getAppSettingsClass = cl.loadClass("lucee.runtime.functions.system.GetApplicationSettings");
-					java.lang.reflect.Method callMethod = getAppSettingsClass.getMethod("call", PageContext.class);
-					Object settings = callMethod.invoke(null, pc);
+					// Resolve both BIFs via FunctionLib by short name; matches the dump/metadata paths.
+					CFMLEngine engine = CFMLEngineFactory.getInstance();
 
-					// Serialize the settings to JSON
-					Class<?> serializeClass = cl.loadClass("lucee.runtime.functions.conversion.SerializeJSON");
-					java.lang.reflect.Method serializeMethod = serializeClass.getMethod("call",
-						PageContext.class, Object.class, Object.class);
-					result.value = (String) serializeMethod.invoke(null, pc, settings, "struct");
+					BIF getAppSettingsBif = engine.getClassUtil().loadBIF(pc, "getApplicationSettings");
+					Object settings = getAppSettingsBif.invoke(pc, new Object[] {});
+
+					BIF serializeJsonBif = engine.getClassUtil().loadBIF(pc, "serializeJSON");
+					result.value = (String) serializeJsonBif.invoke(pc, new Object[] { settings, "struct" });
 				} finally {
-					releaseMethod.invoke(null);
+					ThreadLocalPageContext.release();
 				}
 			} catch (Throwable e) {
 				Log.debug("getApplicationSettings failed: " + e.getMessage());
@@ -658,7 +650,7 @@ public class NativeLuceeVm implements ILuceeVm {
 	}
 
 	@Override
-	public org.eclipse.lsp4j.debug.CompletionItem[] getCompletions(int frameId, String partialExpr) {
+	public CompletionItem[] getCompletions(int frameId, String partialExpr) {
 		// Get PageContext from frame or any suspended frame
 		PageContext pc = null;
 		IDebugFrame frame = frameCache.get((long) frameId);
@@ -666,23 +658,20 @@ public class NativeLuceeVm implements ILuceeVm {
 			pc = ((NativeDebugFrame) frame).getPageContext();
 		}
 		if (pc == null) {
-			for (IDebugFrame f : frameCache.values()) {
-				if (f instanceof NativeDebugFrame) {
-					pc = ((NativeDebugFrame) f).getPageContext();
-					if (pc != null) break;
-				}
-			}
+			// Same rationale as the other fallback sites — use the suspend
+			// map, not frameCache, to avoid stale PCs from earlier suspensions.
+			pc = NativeDebuggerListener.getAnySuspendedPageContext();
 		}
 
 		if (pc == null) {
-			return new org.eclipse.lsp4j.debug.CompletionItem[0];
+			return new CompletionItem[0];
 		}
 
 		return doGetCompletionsWithPageContext(pc, partialExpr);
 	}
 
-	private org.eclipse.lsp4j.debug.CompletionItem[] doGetCompletionsWithPageContext(PageContext pc, String partialExpr) {
-		final java.util.List<org.eclipse.lsp4j.debug.CompletionItem> results = new java.util.ArrayList<>();
+	private CompletionItem[] doGetCompletionsWithPageContext(PageContext pc, String partialExpr) {
+		final List<CompletionItem> results = new ArrayList<>();
 
 		try {
 			ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
@@ -699,32 +688,31 @@ public class NativeLuceeVm implements ILuceeVm {
 			}
 
 			if (base != null) {
-				// Evaluate the base to get keys
+				// Evaluate the base to get keys.
+				// Note: Evaluate implements Function, not BIF — must go through reflection
+				// rather than engine.getClassUtil().loadBIF(pc, "evaluate").
 				try {
-					Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
-					java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
-					java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
 					Class<?> evaluateClass = cl.loadClass("lucee.runtime.functions.dynamicEvaluation.Evaluate");
-					java.lang.reflect.Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
+					Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
 
-					registerMethod.invoke(null, pc);
+					ThreadLocalPageContext.register(pc);
 					try {
 						Object result = callMethod.invoke(null, pc, new Object[]{base});
-						if (result instanceof java.util.Map) {
+						if (result instanceof Map) {
 							@SuppressWarnings("unchecked")
-							java.util.Map<Object, Object> map = (java.util.Map<Object, Object>) result;
+							Map<Object, Object> map = (Map<Object, Object>) result;
 							for (Object key : map.keySet()) {
 								String keyStr = String.valueOf(key);
 								if (keyStr.toLowerCase().startsWith(prefix)) {
-									var item = new org.eclipse.lsp4j.debug.CompletionItem();
+									var item = new CompletionItem();
 									item.setLabel(keyStr);
-									item.setType(org.eclipse.lsp4j.debug.CompletionItemType.PROPERTY);
+									item.setType(CompletionItemType.PROPERTY);
 									results.add(item);
 								}
 							}
 						}
 					} finally {
-						releaseMethod.invoke(null);
+						ThreadLocalPageContext.release();
 					}
 				} catch (Exception e) {
 					// Evaluation failed, return empty
@@ -735,32 +723,19 @@ public class NativeLuceeVm implements ILuceeVm {
 				String[] scopes = {"variables", "local", "arguments", "form", "url", "cgi", "cookie", "session", "application", "server", "request", "this"};
 				for (String scope : scopes) {
 					if (scope.toLowerCase().startsWith(prefix)) {
-						var item = new org.eclipse.lsp4j.debug.CompletionItem();
+						var item = new CompletionItem();
 						item.setLabel(scope);
-						item.setType(org.eclipse.lsp4j.debug.CompletionItemType.MODULE);
+						item.setType(CompletionItemType.MODULE);
 						results.add(item);
 					}
 				}
 
-				// Also try to complete from variables scope
-				try {
-					Object variablesScope = pc.variablesScope();
-					if (variablesScope instanceof java.util.Map) {
-						@SuppressWarnings("unchecked")
-						java.util.Map<Object, Object> map = (java.util.Map<Object, Object>) variablesScope;
-						for (Object key : map.keySet()) {
-							String keyStr = String.valueOf(key);
-							if (keyStr.toLowerCase().startsWith(prefix)) {
-								var item = new org.eclipse.lsp4j.debug.CompletionItem();
-								item.setLabel(keyStr);
-								item.setType(org.eclipse.lsp4j.debug.CompletionItemType.VARIABLE);
-								results.add(item);
-							}
-						}
-					}
-				} catch (Exception e) {
-					// Ignore scope access errors
-				}
+				// Also complete from the frame's variable scopes. When suspended inside a
+				// UDF, `var`-declared locals live in local scope and named parameters in
+				// arguments scope — not the variables scope — so all three need checking.
+				try { addScopeCompletions(pc.variablesScope(), prefix, results); } catch (Exception e) {}
+				try { addScopeCompletions(pc.localScope(), prefix, results); } catch (Exception e) {}
+				try { addScopeCompletions(pc.argumentsScope(), prefix, results); } catch (Exception e) {}
 			}
 		} catch (Exception e) {
 			Log.debug("Completion failed: " + e.getMessage());
@@ -775,9 +750,28 @@ public class NativeLuceeVm implements ILuceeVm {
 		}
 
 		if (results.size() > 100) {
-			return results.subList(0, 100).toArray(new org.eclipse.lsp4j.debug.CompletionItem[0]);
+			return results.subList(0, 100).toArray(new CompletionItem[0]);
 		}
-		return results.toArray(new org.eclipse.lsp4j.debug.CompletionItem[0]);
+		return results.toArray(new CompletionItem[0]);
+	}
+
+	/**
+	 * Add items from a scope whose keys start with the given (lowercase) prefix
+	 * to the completions list. No-op if the scope isn't iterable as a Map.
+	 */
+	private static void addScopeCompletions(Object scope, String prefix, List<CompletionItem> results) {
+		if (!(scope instanceof Map)) return;
+		@SuppressWarnings("unchecked")
+		Map<Object, Object> map = (Map<Object, Object>) scope;
+		for (Object key : map.keySet()) {
+			String keyStr = String.valueOf(key);
+			if (keyStr.toLowerCase().startsWith(prefix)) {
+				var item = new CompletionItem();
+				item.setLabel(keyStr);
+				item.setType(CompletionItemType.VARIABLE);
+				results.add(item);
+			}
+		}
 	}
 
 	@Override
@@ -803,26 +797,16 @@ public class NativeLuceeVm implements ILuceeVm {
 		}
 
 		try {
-			// Use reflection to access Lucee classes - in extension mode, direct class access fails
+			// Evaluate implements Function, not BIF — use reflection rather than loadBIF.
 			ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
-
-			// Get ThreadLocalPageContext class and methods via reflection
-			Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
-			java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
-			java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
-
-			// Get Evaluate class and call method via reflection
 			Class<?> evaluateClass = cl.loadClass("lucee.runtime.functions.dynamicEvaluation.Evaluate");
-			java.lang.reflect.Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
+			Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
 
-			// Register PageContext with ThreadLocal so Lucee functions work
-			registerMethod.invoke(null, pc);
+			ThreadLocalPageContext.register(pc);
 
 			try {
-				// Evaluate the expression
 				Object result = callMethod.invoke(null, pc, new Object[]{expr});
 
-				// Return the result as a debug entity
 				if (result == null) {
 					return Either.Right(Either.Right("null"));
 				} else if (result instanceof String) {
@@ -830,17 +814,15 @@ public class NativeLuceeVm implements ILuceeVm {
 				} else if (result instanceof Number || result instanceof Boolean) {
 					return Either.Right(Either.Right(result.toString()));
 				} else {
-					// Complex object - wrap it for display
 					CfValueDebuggerBridge bridge = new CfValueDebuggerBridge(valTracker, result);
 					return Either.Right(Either.Left(bridge));
 				}
 			} finally {
-				releaseMethod.invoke(null);
+				ThreadLocalPageContext.release();
 			}
 		} catch (Throwable e) {
-			// Unwrap InvocationTargetException to get the real cause
 			Throwable cause = e;
-			if (e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null) {
+			if (e instanceof InvocationTargetException && e.getCause() != null) {
 				cause = e.getCause();
 			}
 			String msg = cause.getMessage();
@@ -884,20 +866,12 @@ public class NativeLuceeVm implements ILuceeVm {
 		Log.debug("setVariable: " + fullPath + " = " + value);
 
 		try {
-			// Use reflection to access Lucee classes - in extension mode, direct class access fails
+			// Evaluate implements Function, not BIF — use reflection rather than loadBIF.
 			ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
-
-			// Get ThreadLocalPageContext class and methods via reflection
-			Class<?> tlpcClass = cl.loadClass("lucee.runtime.engine.ThreadLocalPageContext");
-			java.lang.reflect.Method registerMethod = tlpcClass.getMethod("register", PageContext.class);
-			java.lang.reflect.Method releaseMethod = tlpcClass.getMethod("release");
-
-			// Get Evaluate class and call method via reflection
 			Class<?> evaluateClass = cl.loadClass("lucee.runtime.functions.dynamicEvaluation.Evaluate");
-			java.lang.reflect.Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
+			Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
 
-			// Register PageContext with ThreadLocal so Lucee functions work
-			registerMethod.invoke(null, pc);
+			ThreadLocalPageContext.register(pc);
 
 			try {
 				// First, evaluate the value expression to get the actual object
@@ -919,12 +893,12 @@ public class NativeLuceeVm implements ILuceeVm {
 					return Either.Right(Either.Left(bridge));
 				}
 			} finally {
-				releaseMethod.invoke(null);
+				ThreadLocalPageContext.release();
 			}
 		} catch (Throwable e) {
 			// Unwrap InvocationTargetException to get the real cause
 			Throwable cause = e;
-			if (e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null) {
+			if (e instanceof InvocationTargetException && e.getCause() != null) {
 				cause = e.getCause();
 			}
 			String msg = cause.getMessage();

@@ -29,17 +29,17 @@ public class ComponentImpl extends ClassVisitor {
     @Override
     public void visitEnd() {
         final var fieldName = "__luceedebug__pinned_componentScopeMarkerTrait";
-        visitField(org.objectweb.asm.Opcodes.ACC_PUBLIC | org.objectweb.asm.Opcodes.ACC_TRANSIENT, fieldName, "Ljava/lang/Object;", null, null);
+        visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_TRANSIENT, fieldName, "Ljava/lang/Object;", null, null);
 
         final var name = "__luceedebug__pinComponentScopeMarkerTrait";
         final var descriptor = "(Ljava/lang/Object;)V";
-        final var mv = visitMethod(org.objectweb.asm.Opcodes.ACC_PUBLIC, name, descriptor, null, null);
-        final var ga = new GeneratorAdapter(mv, org.objectweb.asm.Opcodes.ACC_PUBLIC, name, descriptor);
+        final var mv = visitMethod(Opcodes.ACC_PUBLIC, name, descriptor, null, null);
+        final var ga = new GeneratorAdapter(mv, Opcodes.ACC_PUBLIC, name, descriptor);
 
         ga.loadThis();
         ga.loadArg(0);
-        ga.putField(org.objectweb.asm.Type.getType("Llucee/runtime/ComponentImpl;"), fieldName, org.objectweb.asm.Type.getType("Ljava/lang/Object;"));
-        ga.visitInsn(org.objectweb.asm.Opcodes.RETURN);
+        ga.putField(Type.getType("Llucee/runtime/ComponentImpl;"), fieldName, Type.getType("Ljava/lang/Object;"));
+        ga.visitInsn(Opcodes.RETURN);
         ga.endMethod();
     }
 }

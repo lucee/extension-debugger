@@ -9,6 +9,7 @@ function testSetVariable( required string input ) {
 	var modifiable = "original";
 	var numericVar = 100;
 	var structVar = { "key": "original-value" };
+	var booleanVar = true;
 
 	// First breakpoint - modify variables here
 	var checkpoint1 = true;

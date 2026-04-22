@@ -84,9 +84,7 @@ component {
 		if ( len( arguments.logLevel ) ) {
 			args[ "logLevel" ] = arguments.logLevel;
 		}
-		if ( arguments.logExceptions ) {
-			args[ "logExceptions" ] = true;
-		}
+		args[ "logExceptions" ] = arguments.logExceptions;
 		var response = sendRequest( "attach", args );
 		// Wait for initialized event from server
 		waitForEvent( "initialized", 5000 );
@@ -202,6 +200,10 @@ component {
 		return sendRequest( "getMetadata", {
 			"variablesReference": arguments.variablesReference
 		} );
+	}
+
+	public struct function getApplicationSettings() {
+		return sendRequest( "getApplicationSettings", {} );
 	}
 
 	public struct function setVariable( required numeric variablesReference, required string name, required string value ) {

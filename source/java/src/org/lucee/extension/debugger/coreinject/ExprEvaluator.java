@@ -7,6 +7,8 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 
 import lucee.runtime.PageContext;
+import lucee.runtime.compiler.Renderer;
+
 import org.lucee.extension.debugger.Either;
 import org.lucee.extension.debugger.coreinject.frame.Frame;
 
@@ -120,7 +122,7 @@ class ExprEvaluator {
         static Optional<Evaluator> maybeGet() {
             try {
                 final MethodType lucee5_evaluateExpr = MethodType.methodType(
-                    /*returntype*/lucee.runtime.compiler.Renderer.Result.class,
+                    /*returntype*/Renderer.Result.class,
                     /*PageContext pc*/ PageContext.class,
                     /*String cfml*/ String.class,
                     /*int dialect*/ int.class,
@@ -129,7 +131,7 @@ class ExprEvaluator {
                 );
                 var methodHandle = MethodHandles
                     .lookup()
-                    .findStatic(lucee.runtime.compiler.Renderer.class, "tag", lucee5_evaluateExpr);
+                    .findStatic(Renderer.class, "tag", lucee5_evaluateExpr);
                 return Optional.of(new Lucee5Evaluator(methodHandle));
             }
             catch (NoSuchMethodException e) {
@@ -161,7 +163,7 @@ class ExprEvaluator {
         static Optional<Evaluator> maybeGet() {
             try {
                 final MethodType lucee6_evaluateExpr = MethodType.methodType(
-                    /*returntype*/lucee.runtime.compiler.Renderer.Result.class,
+                    /*returntype*/Renderer.Result.class,
                     /*PageContext pc*/ PageContext.class,
                     /*String cfml*/ String.class,
                     /*boolean catchOutput*/ boolean.class,
@@ -169,7 +171,7 @@ class ExprEvaluator {
                 );
                 var methodHandle = MethodHandles
                     .lookup()
-                    .findStatic(lucee.runtime.compiler.Renderer.class, "tag", lucee6_evaluateExpr);
+                    .findStatic(Renderer.class, "tag", lucee6_evaluateExpr);
                 return Optional.of(new Lucee6Evaluator(methodHandle));
             }
             catch (NoSuchMethodException e) {

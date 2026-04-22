@@ -1,6 +1,7 @@
 package org.lucee.extension.debugger.coreinject;
 
 import lucee.runtime.exp.PageException;
+import lucee.runtime.type.Collection;
 
 public class UnsafeUtils {
     @SuppressWarnings("unchecked")
@@ -9,7 +10,7 @@ public class UnsafeUtils {
     }
 
     @SuppressWarnings("deprecation")
-    public static Object deprecatedScopeGet(lucee.runtime.type.Collection scope, String key) throws PageException {
+    public static Object deprecatedScopeGet(Collection scope, String key) throws PageException {
         // lucee wants us to use Collection's
         // public Object get(Collection.Key key) throws PageException;
         return scope.get(key);

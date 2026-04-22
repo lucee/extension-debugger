@@ -5,6 +5,7 @@ import org.eclipse.lsp4j.debug.OutputEventArgumentsCategory;
 import org.eclipse.lsp4j.debug.services.IDebugProtocolClient;
 
 import lucee.loader.engine.CFMLEngineFactory;
+import lucee.runtime.exp.PageException;
 
 /**
  * Centralized logging for luceedebug.
@@ -225,7 +226,7 @@ public class Log {
 			return;
 		}
 		StringBuilder sb = new StringBuilder();
-		sb.append(t.getClass().getSimpleName()).append(": ").append(t.getMessage());
+		sb.append(exceptionTypeName(t)).append(": ").append(t.getMessage());
 
 		// Get full CFML stack trace
 		String stackTrace = ExceptionUtil.getCfmlStackTraceOrFallback(t);
@@ -245,6 +246,24 @@ public class Log {
 			}
 		}
 		sendToDap(sb.toString(), OutputEventArgumentsCategory.STDERR);
+	}
+
+	/**
+	 * Resolve the type name the user would recognise: the CFML type for
+	 * PageExceptions (e.g. "TestException" from cfthrow type="..."), falling
+	 * back to the Java class simple name for anything else.
+	 */
+	private static String exceptionTypeName(Throwable t) {
+		if (t instanceof PageException) {
+			PageException pe = (PageException) t;
+			String type = pe.getTypeAsString();
+			if ("custom_type".equals(type) || "customtype".equals(type)) {
+				String custom = pe.getCustomTypeAsString();
+				if (custom != null && !custom.isEmpty()) return custom;
+			}
+			if (type != null && !type.isEmpty()) return type;
+		}
+		return t.getClass().getSimpleName();
 	}
 
 	/**

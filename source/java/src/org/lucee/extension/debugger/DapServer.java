@@ -2,8 +2,11 @@ package org.lucee.extension.debugger;
 
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.reflect.Method;
+import java.net.BindException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
+import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -12,6 +15,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
+
+import lucee.Info;
+import lucee.loader.engine.CFMLEngineFactory;
+import lucee.runtime.exp.PageException;
 
 import org.eclipse.lsp4j.debug.*;
 import org.eclipse.lsp4j.debug.launch.DSPLauncher;
@@ -129,9 +136,15 @@ public class DapServer implements IDebugProtocolServer {
             // This is different from JDWP breakpoints which use JDWP thread IDs
             final int i32_threadID = (int)(long)javaThreadId;
             var event = new StoppedEventArguments();
-            event.setReason("breakpoint");
+            // Lucee's debuggerSuspend label is "function breakpoint: <name>" for function
+            // breakpoints, otherwise it's either null (line breakpoint) or a user-supplied
+            // label from a programmatic breakpoint() call.
+            if (label != null && label.startsWith("function breakpoint")) {
+                event.setReason("function breakpoint");
+            } else {
+                event.setReason("breakpoint");
+            }
             event.setThreadId(i32_threadID);
-            // Set label as description if provided (from programmatic breakpoint("label") calls)
             if (label != null && !label.isEmpty()) {
                 event.setDescription(label);
             }
@@ -194,13 +207,13 @@ public class DapServer implements IDebugProtocolServer {
 
             // Try to bind, with retries for port in use (OSGi bundle reload race condition)
             int maxRetries = 5;
-            java.net.BindException lastBindError = null;
+            BindException lastBindError = null;
             for (int attempt = 1; attempt <= maxRetries; attempt++) {
                 try {
                     server.bind(addr);
                     lastBindError = null;
                     break;
-                } catch (java.net.BindException e) {
+                } catch (BindException e) {
                     lastBindError = e;
                     if (attempt < maxRetries) {
                         Log.info("Port " + port + " in use, retrying in 1s (attempt " + attempt + "/" + maxRetries + ")");
@@ -231,7 +244,7 @@ public class DapServer implements IDebugProtocolServer {
 
                 // Mark DAP client as connected - enables breakpoint() BIF to suspend (native mode only)
                 if (luceeVm instanceof NativeLuceeVm) {
-                    org.lucee.extension.debugger.coreinject.NativeDebuggerListener.setDapClientConnected(true);
+                    NativeDebuggerListener.setDapClientConnected(true);
                 }
 
                 try {
@@ -254,7 +267,7 @@ public class DapServer implements IDebugProtocolServer {
                     Log.setDapClient(null);
                     // Mark DAP client as disconnected - disables breakpoint() BIF suspension (native mode only)
                     if (luceeVm instanceof NativeLuceeVm) {
-                        org.lucee.extension.debugger.coreinject.NativeDebuggerListener.setDapClientConnected(false);
+                        NativeDebuggerListener.setDapClientConnected(false);
                     }
                     try { socket.close(); } catch (Exception ignored) {}
                     System.out.println("[luceedebug] Client socket closed, returning to accept loop");
@@ -263,7 +276,7 @@ public class DapServer implements IDebugProtocolServer {
                 logger.finest("debugger connection closed");
             }
         }
-        catch (java.net.SocketException e) {
+        catch (SocketException e) {
             // Expected when shutdown() closes the socket
             System.out.println("[luceedebug] DAP server SocketException: " + e.getMessage());
             Log.info("DAP server socket closed");
@@ -298,7 +311,7 @@ public class DapServer implements IDebugProtocolServer {
             System.out.println("[luceedebug] shutdown() - closing existing DAP server socket");
             Log.debug("shutdown() - found socket in system properties, closing via reflection...");
             try {
-                java.lang.reflect.Method closeMethod = storedSocket.getClass().getMethod("close");
+                Method closeMethod = storedSocket.getClass().getMethod("close");
                 closeMethod.invoke(storedSocket);
                 Log.debug("shutdown() - socket closed");
             } catch (Exception e) {
@@ -355,7 +368,7 @@ public class DapServer implements IDebugProtocolServer {
         c.setSupportsCompletionsRequest(isNativeMode);
         c.setSupportsFunctionBreakpoints(isNativeMode);
 
-        Log.debug("Returning capabilities (nativeMode=" + isNativeMode + ") with exceptionBreakpointFilters: " + java.util.Arrays.toString(c.getExceptionBreakpointFilters()));
+        Log.debug("Returning capabilities (nativeMode=" + isNativeMode + ") with exceptionBreakpointFilters: " + Arrays.toString(c.getExceptionBreakpointFilters()));
 
         return CompletableFuture.completedFuture(c);
     }
@@ -486,12 +499,12 @@ public class DapServer implements IDebugProtocolServer {
         // only if the extension was actually loaded by Lucee's startup-hook mechanism.
         try {
             Class<?> activatorClass = Class.forName("org.lucee.extension.debugger.extension.ExtensionActivator");
-            java.lang.reflect.Method isNativeMethod = activatorClass.getMethod("isNativeModeActive");
+            Method isNativeMethod = activatorClass.getMethod("isNativeModeActive");
             Boolean isNative = (Boolean) isNativeMethod.invoke(null);
 
             if (isNative) {
                 // We're in native mode - use ExtensionActivator to register
-                java.lang.reflect.Method registerMethod = activatorClass.getMethod("registerListener", String.class);
+                Method registerMethod = activatorClass.getMethod("registerListener", String.class);
                 Boolean registered = (Boolean) registerMethod.invoke(null, clientSecret);
                 if (registered) {
                     secretValidated = true;
@@ -639,7 +652,7 @@ public class DapServer implements IDebugProtocolServer {
     public CompletableFuture<StackTraceResponse> stackTrace(StackTraceArguments args) {
         if (!secretValidated) return notAuthorized();
 
-        var lspFrames = new ArrayList<org.eclipse.lsp4j.debug.StackFrame>();
+        var lspFrames = new ArrayList<StackFrame>();
 
         for (var cfFrame : luceeVm_.getStackTrace(args.getThreadId())) {
             final var source = new Source();
@@ -648,7 +661,7 @@ public class DapServer implements IDebugProtocolServer {
             Log.debug("stackTrace: raw=" + rawPath + " -> transformed=" + transformedPath);
             source.setPath(transformedPath);
 
-            final var lspFrame = new org.eclipse.lsp4j.debug.StackFrame();
+            final var lspFrame = new StackFrame();
             lspFrame.setId((int)cfFrame.getId());
             lspFrame.setName(cfFrame.getName());
             lspFrame.setLine(cfFrame.getLine());
@@ -658,7 +671,7 @@ public class DapServer implements IDebugProtocolServer {
         }
 
         var response = new StackTraceResponse();
-        response.setStackFrames(lspFrames.toArray(new org.eclipse.lsp4j.debug.StackFrame[lspFrames.size()]));
+        response.setStackFrames(lspFrames.toArray(new StackFrame[lspFrames.size()]));
         response.setTotalFrames(lspFrames.size());
 
         return CompletableFuture.completedFuture(response);
@@ -800,12 +813,12 @@ public class DapServer implements IDebugProtocolServer {
         var response = new BreakpointLocationsResponse();
 
         // Only works in native mode with NativeLuceeVm
-        if (!(luceeVm_ instanceof org.lucee.extension.debugger.coreinject.NativeLuceeVm)) {
+        if (!(luceeVm_ instanceof NativeLuceeVm)) {
             response.setBreakpoints(new BreakpointLocation[0]);
             return CompletableFuture.completedFuture(response);
         }
 
-        var nativeVm = (org.lucee.extension.debugger.coreinject.NativeLuceeVm) luceeVm_;
+        var nativeVm = (NativeLuceeVm) luceeVm_;
         String serverPath = applyPathTransformsIdeToCf(args.getSource().getPath());
         int[] executableLines = nativeVm.getExecutableLines(serverPath);
 
@@ -813,7 +826,7 @@ public class DapServer implements IDebugProtocolServer {
         int startLine = args.getLine();
         int endLine = args.getEndLine() != null ? args.getEndLine() : startLine;
 
-        var locations = new java.util.ArrayList<BreakpointLocation>();
+        var locations = new ArrayList<BreakpointLocation>();
         for (int line : executableLines) {
             if (line >= startLine && line <= endLine) {
                 var loc = new BreakpointLocation();
@@ -844,7 +857,7 @@ public class DapServer implements IDebugProtocolServer {
 
 		// Check if "uncaught" is in the filters
 		String[] filters = args.getFilters();
-		Log.debug("setExceptionBreakpoints: filters=" + java.util.Arrays.toString(filters));
+		Log.debug("setExceptionBreakpoints: filters=" + Arrays.toString(filters));
 		boolean breakOnUncaught = false;
 		if (filters != null) {
 			for (String filter : filters) {
@@ -876,7 +889,7 @@ public class DapServer implements IDebugProtocolServer {
 
 		// Only works in native mode - NativeDebuggerListener doesn't exist in agent mode
 		if (!(luceeVm_ instanceof NativeLuceeVm)) {
-			return CompletableFuture.completedFuture(new SetFunctionBreakpointsResponse());
+			return CompletableFuture.completedFuture(emptyFunctionBreakpointsResponse());
 		}
 
 		FunctionBreakpoint[] bps = args.getBreakpoints();
@@ -884,7 +897,7 @@ public class DapServer implements IDebugProtocolServer {
 
 		if (bps == null || bps.length == 0) {
 			NativeDebuggerListener.clearFunctionBreakpoints();
-			return CompletableFuture.completedFuture(new SetFunctionBreakpointsResponse());
+			return CompletableFuture.completedFuture(emptyFunctionBreakpointsResponse());
 		}
 
 		String[] names = new String[bps.length];
@@ -915,6 +928,17 @@ public class DapServer implements IDebugProtocolServer {
 	}
 
 	/**
+	 * DAP requires the breakpoints array to be present on the response, even when empty.
+	 * Clients deserialize it directly as `response.body.breakpoints`; an absent field raises
+	 * a "key [BREAKPOINTS] doesn't exist" error on the CFML side.
+	 */
+	private static SetFunctionBreakpointsResponse emptyFunctionBreakpointsResponse() {
+		SetFunctionBreakpointsResponse response = new SetFunctionBreakpointsResponse();
+		response.setBreakpoints(new Breakpoint[0]);
+		return response;
+	}
+
+	/**
 	 * Returns exception details when stopped due to an exception.
 	 * VSCode calls this after receiving a stopped event with reason="exception".
 	 */
@@ -926,7 +950,22 @@ public class DapServer implements IDebugProtocolServer {
 		Throwable ex = luceeVm_.getExceptionForThread(args.getThreadId());
 		var response = new ExceptionInfoResponse();
 		if (ex != null) {
-			response.setExceptionId(ex.getClass().getName());
+			// Prefer the CFML type over the Java class name. For cfthrow
+			// type="TestException" the underlying PageException carries
+			// type="custom_type" + customType="TestException", so we unwrap that;
+			// for other PageExceptions the type string itself is what we want.
+			String cfmlType = null;
+			if (ex instanceof PageException) {
+				PageException pe = (PageException) ex;
+				String t = pe.getTypeAsString();
+				if ("custom_type".equals(t) || "customtype".equals(t)) {
+					cfmlType = pe.getCustomTypeAsString();
+				} else {
+					cfmlType = t;
+				}
+				if (cfmlType != null && cfmlType.isEmpty()) cfmlType = null;
+			}
+			response.setExceptionId(cfmlType != null ? cfmlType : ex.getClass().getName());
 			response.setDescription(ex.getMessage());
 			response.setBreakMode(ExceptionBreakMode.UNHANDLED);
 			// Build detailed stack trace
@@ -1428,7 +1467,7 @@ public class DapServer implements IDebugProtocolServer {
      */
     private static String getLuceeVersion() {
         try {
-            lucee.Info info = lucee.loader.engine.CFMLEngineFactory.getInstance().getInfo();
+            Info info = CFMLEngineFactory.getInstance().getInfo();
             return info.getVersion().toString();
         } catch (Throwable t) {
             // NoClassDefFoundError is an Error, not Exception - need to catch Throwable

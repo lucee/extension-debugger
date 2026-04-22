@@ -1,11 +1,21 @@
 package org.lucee.extension.debugger.coreinject;
 
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.OutputStream;
 import java.lang.ref.WeakReference;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
+import lucee.loader.engine.CFMLEngineFactory;
 import lucee.runtime.PageContext;
+
 import org.lucee.extension.debugger.Config;
 import org.lucee.extension.debugger.Log;
 
@@ -244,7 +254,7 @@ public class NativeDebuggerListener {
 	 * Cached reflection method for DebuggerFrame.getLine().
 	 * Initialized lazily on first use in getStackDepth().
 	 */
-	private static volatile java.lang.reflect.Method debuggerFrameGetLineMethod = null;
+	private static volatile Method debuggerFrameGetLineMethod = null;
 
 	public static void setNativeMode(boolean enabled) {
 		nativeMode = enabled;
@@ -452,8 +462,8 @@ public class NativeDebuggerListener {
 	 * Get all suspended thread IDs.
 	 * Used by NativeLuceeVm to include suspended threads in thread listing.
 	 */
-	public static java.util.Set<Long> getSuspendedThreadIds() {
-		return new java.util.HashSet<>(nativelySuspendedThreads.keySet());
+	public static Set<Long> getSuspendedThreadIds() {
+		return new HashSet<>(nativelySuspendedThreads.keySet());
 	}
 
 	/**
@@ -491,6 +501,19 @@ public class NativeDebuggerListener {
 	}
 
 	/**
+	 * Get a PageContext from any currently-suspended thread. Used by DAP-custom
+	 * requests (getApplicationSettings) that need a live request PC but don't
+	 * carry a threadId. Returns null if no thread is suspended.
+	 */
+	public static PageContext getAnySuspendedPageContext() {
+		for (WeakReference<PageContext> ref : nativelySuspendedThreads.values()) {
+			PageContext pc = ref.get();
+			if (pc != null) return pc;
+		}
+		return null;
+	}
+
+	/**
 	 * Get suspend location for a specific thread.
 	 * Used to create synthetic frame for top-level code.
 	 * @param javaThreadId The Java thread ID
@@ -520,7 +543,7 @@ public class NativeDebuggerListener {
 		Log.debug("resumeNativeThread: calling debuggerResume() for thread " + javaThreadId);
 		try {
 			// Call debuggerResume() via reflection (Lucee7+ method)
-			java.lang.reflect.Method resumeMethod = pc.getClass().getMethod("debuggerResume");
+			Method resumeMethod = pc.getClass().getMethod("debuggerResume");
 			resumeMethod.invoke(pc);
 			Log.debug("resumeNativeThread: debuggerResume() completed for thread " + javaThreadId);
 			return true;
@@ -614,12 +637,12 @@ public class NativeDebuggerListener {
 	 */
 	public static int getStackDepth(PageContext pc) {
 		try {
-			java.lang.reflect.Method getFrames = pc.getClass().getMethod("getDebuggerFrames");
+			Method getFrames = pc.getClass().getMethod("getDebuggerFrames");
 			Object[] frames = (Object[]) getFrames.invoke(pc);
 			if (frames == null || frames.length == 0) return 0;
 
 			// Cache the getLine method on first use
-			java.lang.reflect.Method getLine = debuggerFrameGetLineMethod;
+			Method getLine = debuggerFrameGetLineMethod;
 			if (getLine == null) {
 				getLine = frames[0].getClass().getMethod("getLine");
 				debuggerFrameGetLineMethod = getLine;
@@ -925,12 +948,12 @@ public class NativeDebuggerListener {
 			// Use reflection to call Evaluate.call() through Lucee's classloader
 			ClassLoader luceeLoader = pc.getClass().getClassLoader();
 			Class<?> evaluateClass = luceeLoader.loadClass("lucee.runtime.functions.dynamicEvaluation.Evaluate");
-			java.lang.reflect.Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
+			Method callMethod = evaluateClass.getMethod("call", PageContext.class, Object[].class);
 			Object result = callMethod.invoke(null, pc, new Object[]{ condition });
 
 			// Cast result to boolean using Lucee's Caster
 			Class<?> casterClass = luceeLoader.loadClass("lucee.runtime.op.Caster");
-			java.lang.reflect.Method toBooleanMethod = casterClass.getMethod("toBoolean", Object.class);
+			Method toBooleanMethod = casterClass.getMethod("toBoolean", Object.class);
 			return (Boolean) toBooleanMethod.invoke(null, result);
 		} catch (Exception e) {
 			// Condition evaluation failed - don't suspend
@@ -999,7 +1022,7 @@ public class NativeDebuggerListener {
 			}
 
 			// Use reflection for PageContextImpl.getPageSource() - core class not visible to OSGi bundle
-			java.lang.reflect.Method getPageSourceMethod = pc.getClass().getMethod( "getPageSource", String.class );
+			Method getPageSourceMethod = pc.getClass().getMethod( "getPageSource", String.class );
 			Object ps = getPageSourceMethod.invoke( pc, relativePath );
 			if ( ps == null ) {
 				Log.debug( "getExecutableLines: no PageSource for " + absolutePath );
@@ -1007,7 +1030,7 @@ public class NativeDebuggerListener {
 			}
 
 			// Load/compile the page via PageSource.loadPage(PageContext, boolean)
-			java.lang.reflect.Method loadPageMethod = ps.getClass().getMethod( "loadPage", PageContext.class, boolean.class );
+			Method loadPageMethod = ps.getClass().getMethod( "loadPage", PageContext.class, boolean.class );
 			Object page = loadPageMethod.invoke( ps, pc, false );
 			if ( page == null ) {
 				Log.debug( "getExecutableLines: failed to load page " + absolutePath );
@@ -1015,7 +1038,7 @@ public class NativeDebuggerListener {
 			}
 
 			// Get executable lines from compiled Page class - returns Object[] {compileTime, lines}
-			java.lang.reflect.Method getExecLinesMethod = page.getClass().getMethod( "getExecutableLines" );
+			Method getExecLinesMethod = page.getClass().getMethod( "getExecutableLines" );
 			Object result = getExecLinesMethod.invoke( page );
 
 			// Handle old Lucee versions that return int[] directly
@@ -1052,7 +1075,7 @@ public class NativeDebuggerListener {
 			Log.error( "getExecutableLines: compiled class for [" + absolutePath + "] is missing debug info (should be auto-generated in debugger mode)" );
 			return new int[0];
 		}
-		catch ( java.lang.reflect.InvocationTargetException e ) {
+		catch ( InvocationTargetException e ) {
 			// Unwrap the real exception from reflection
 			Throwable cause = e.getCause();
 			Log.debug( "getExecutableLines failed for " + absolutePath + ": " +
@@ -1071,19 +1094,19 @@ public class NativeDebuggerListener {
 	 */
 	private static PageContext getAnyActivePageContext() {
 		try {
-			Object engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
-			java.lang.reflect.Method getEngineMethod = engine.getClass().getMethod("getEngine");
+			Object engine = CFMLEngineFactory.getInstance();
+			Method getEngineMethod = engine.getClass().getMethod("getEngine");
 			Object engineImpl = getEngineMethod.invoke(engine);
 
-			java.lang.reflect.Method getFactoriesMethod = engineImpl.getClass().getMethod("getCFMLFactories");
+			Method getFactoriesMethod = engineImpl.getClass().getMethod("getCFMLFactories");
 			@SuppressWarnings("unchecked")
-			java.util.Map<String, ?> factoriesMap = (java.util.Map<String, ?>) getFactoriesMethod.invoke(engineImpl);
+			Map<String, ?> factoriesMap = (Map<String, ?>) getFactoriesMethod.invoke(engineImpl);
 
 			for (Object factory : factoriesMap.values()) {
 				try {
-					java.lang.reflect.Method getActiveMethod = factory.getClass().getMethod("getActivePageContexts");
+					Method getActiveMethod = factory.getClass().getMethod("getActivePageContexts");
 					@SuppressWarnings("unchecked")
-					java.util.Map<Integer, ?> activeContexts = (java.util.Map<Integer, ?>) getActiveMethod.invoke(factory);
+					Map<Integer, ?> activeContexts = (Map<Integer, ?>) getActiveMethod.invoke(factory);
 
 					for (Object pc : activeContexts.values()) {
 						if (pc instanceof PageContext) {
@@ -1106,15 +1129,15 @@ public class NativeDebuggerListener {
 	 */
 	private static PageContext createTemporaryPageContext() {
 		try {
-			Object engine = lucee.loader.engine.CFMLEngineFactory.getInstance();
+			Object engine = CFMLEngineFactory.getInstance();
 
 			// Find and call createPageContext(File, String, String, String, Cookie[], Map, Map, Map, OutputStream, long, boolean)
-			for (java.lang.reflect.Method m : engine.getClass().getMethods()) {
+			for (Method m : engine.getClass().getMethods()) {
 				if (m.getName().equals("createPageContext") && m.getParameterCount() == 11) {
 					Class<?>[] params = m.getParameterTypes();
 					if (params[0].getName().equals("java.io.File")) {
-						java.io.File contextRoot = new java.io.File(".");
-						java.io.OutputStream devNull = new java.io.ByteArrayOutputStream();
+						File contextRoot = new File(".");
+						OutputStream devNull = new ByteArrayOutputStream();
 						Object pc = m.invoke(engine, contextRoot, "localhost", "/", "", null, null, null, null, devNull, -1L, false);
 						if (pc instanceof PageContext) {
 							return (PageContext) pc;

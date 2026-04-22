@@ -1,10 +1,17 @@
 package org.lucee.extension.debugger.coreinject.frame;
 
+import lucee.runtime.Component;
+import lucee.runtime.ComponentScope;
 import lucee.runtime.PageContext;
 import lucee.runtime.PageContextImpl;
-import lucee.runtime.type.scope.LocalNotSupportedScope;
-
 import lucee.runtime.type.Collection;
+import lucee.runtime.type.Struct;
+import lucee.runtime.type.scope.Argument;
+import lucee.runtime.type.scope.ClosureScope;
+import lucee.runtime.type.scope.Local;
+import lucee.runtime.type.scope.LocalNotSupportedScope;
+import lucee.runtime.type.scope.Scope;
+import lucee.runtime.type.scope.Variables;
 
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -84,21 +91,21 @@ public class Frame extends DebugFrame {
     public static class FrameContext {
         final public PageContext pageContext;
 
-        public final lucee.runtime.type.scope.Scope application;
-        public final lucee.runtime.type.scope.Argument arguments;
-        public final lucee.runtime.type.scope.Scope form;
-        public final lucee.runtime.type.scope.Local local;
-        public final lucee.runtime.type.scope.Scope request;
-        public final lucee.runtime.type.scope.Scope session;
-        public final lucee.runtime.type.scope.Scope server;
-        public final lucee.runtime.type.scope.Scope url;
-        public final lucee.runtime.type.scope.Variables variables;
+        public final Scope application;
+        public final Argument arguments;
+        public final Scope form;
+        public final Local local;
+        public final Scope request;
+        public final Scope session;
+        public final Scope server;
+        public final Scope url;
+        public final Variables variables;
         // n.b. the `this` scope does not derive from Scope
-        public final lucee.runtime.type.Struct this_;
-        public final lucee.runtime.type.scope.Scope static_;
+        public final Struct this_;
+        public final Scope static_;
         
         // lazy init because it (might?) be expensive to walk scope chains eagerly every frame
-        private ArrayList<lucee.runtime.type.scope.ClosureScope> capturedScopeChain = null;
+        private ArrayList<ClosureScope> capturedScopeChain = null;
 
         static private final ConcurrentWeakKeyMap<PageContext, Object> activeFrameLockByPageContext = new ConcurrentWeakKeyMap<>();
 
@@ -121,16 +128,16 @@ public class Frame extends DebugFrame {
             this.this_       = getScopelikeOrNull(() -> {
                 // there is also `PageContextImpl.thisGet()` but it can create a `this` property on the variables scope, which seems like
                 // something we don't want to do, since it mutates the user's scopes instead of just reading from them.
-                if (this.variables instanceof lucee.runtime.ComponentScope) {
+                if (this.variables instanceof ComponentScope) {
                     // The `this` scope IS the component, bound to the variables scope that is an instanceof ComponentScope
                     // (which means ComponentScope is a variables scope containing a THIS scope, rather than ComponentScope IS the this scope)
                     // Alternatively we could just lookup the `this` property on `variables`.
-                    return ((lucee.runtime.ComponentScope)this.variables).getComponent();
+                    return ((ComponentScope)this.variables).getComponent();
                 }
-                else if (this.variables instanceof lucee.runtime.type.scope.ClosureScope) {
+                else if (this.variables instanceof ClosureScope) {
                     // A closure scope is a variables scope wrapper containing a variable scope.
                     // Probably we could test here for if the closureScope contains a component scope, but just looking for `this` seems to be fine.
-                    return (lucee.runtime.type.Struct)UnsafeUtils.deprecatedScopeGet(this.variables, "this");
+                    return (Struct)UnsafeUtils.deprecatedScopeGet(this.variables, "this");
                 }
                 else {
                     return null;
@@ -138,23 +145,23 @@ public class Frame extends DebugFrame {
             });
 
             // If we have a `this` scope, meaning we are in a component, then we should have a static scope.
-            this.static_ = this.this_ instanceof lucee.runtime.Component ? ((lucee.runtime.Component)this.this_).staticScope() : null;
+            this.static_ = this.this_ instanceof Component ? ((Component)this.this_).staticScope() : null;
         }
 
-        public ArrayList<lucee.runtime.type.scope.ClosureScope> getCapturedScopeChain() {
+        public ArrayList<ClosureScope> getCapturedScopeChain() {
             if (capturedScopeChain == null) {
                 capturedScopeChain = getCapturedScopeChain(variables);
             }
             return capturedScopeChain;
         }
 
-        private static ArrayList<lucee.runtime.type.scope.ClosureScope> getCapturedScopeChain(lucee.runtime.type.scope.Scope variables) {
-            if (variables instanceof lucee.runtime.type.scope.ClosureScope) {
+        private static ArrayList<ClosureScope> getCapturedScopeChain(Scope variables) {
+            if (variables instanceof ClosureScope) {
                 final var setLike_seen = new IdentityHashMap<>();
-                final var result = new ArrayList<lucee.runtime.type.scope.ClosureScope>();
+                final var result = new ArrayList<ClosureScope>();
                 var scope = variables;
-                while (scope instanceof lucee.runtime.type.scope.ClosureScope) {
-                    final var captured = (lucee.runtime.type.scope.ClosureScope)scope;
+                while (scope instanceof ClosureScope) {
+                    final var captured = (ClosureScope)scope;
                     if (setLike_seen.containsKey(captured)) {
                         break;
                     }

@@ -2,6 +2,8 @@ package org.lucee.extension.debugger;
 
 import java.util.ArrayList;
 
+import lucee.runtime.PageContext;
+
 /**
  * We might be able to whittle this down to just {push,pop,step},
  * which is what instrumented pages need. The other methods are defined in package coreinject,
@@ -17,13 +19,13 @@ public interface IDebugManager {
     /**
      * most common frame type
      */
-    public void pushCfFrame(lucee.runtime.PageContext pc, String sourceFilePath);
+    public void pushCfFrame(PageContext pc, String sourceFilePath);
     /**
      * a "default value initialization frame" is the frame that does default function value init,
      * like setting a,b,c in the following:
      * `function foo(a=1,b=2,c=3) {}; foo(42);` <-- init frame will be stepped into twice, once for `b`, once for `c`; `a` is not default init'd
      */
-    public void pushCfFunctionDefaultValueInitializationFrame(lucee.runtime.PageContext pageContext, String sourceFilePath);
+    public void pushCfFunctionDefaultValueInitializationFrame(PageContext pageContext, String sourceFilePath);
     public void popCfFrame();
 
     // these method names are "magic" in that they serve as tags

@@ -3,6 +3,8 @@ package org.lucee.extension.debugger;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
+import org.eclipse.lsp4j.debug.CompletionItem;
+
 import org.lucee.extension.debugger.strong.DapBreakpointID;
 import org.lucee.extension.debugger.strong.CanonicalServerAbsPath;
 import org.lucee.extension.debugger.strong.RawIdePath;
@@ -87,7 +89,7 @@ public interface ILuceeVm {
      * @param partialExpr The partial expression to complete (e.g., "local.fo" or "variables.")
      * @return Array of CompletionItems
      */
-    public org.eclipse.lsp4j.debug.CompletionItem[] getCompletions(int frameId, String partialExpr);
+    public CompletionItem[] getCompletions(int frameId, String partialExpr);
 
     public String[] getTrackedCanonicalFileNames();
     /**
@@ -117,13 +119,13 @@ public interface ILuceeVm {
      * Register callback for exception events (native mode only).
      * Called with Java thread ID when a thread stops due to an uncaught exception.
      */
-    public void registerExceptionEventCallback(java.util.function.Consumer<Long> cb);
+    public void registerExceptionEventCallback(Consumer<Long> cb);
 
     /**
      * Register callback for pause events (native mode only).
      * Called with Java thread ID when a thread stops due to user pause request.
      */
-    public void registerPauseEventCallback(java.util.function.Consumer<Long> cb);
+    public void registerPauseEventCallback(Consumer<Long> cb);
 
     /**
      * Get the exception that caused a thread to suspend.
