@@ -152,11 +152,6 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 					systemOutput( "skipping: exception breakpoints not supported", true );
 					return;
 				}
-				// Gated on Lucee core change — see native-exception-suspend-timing.md.
-				// The uncaught-exception signal fires after debuggerFrames has been
-				// popped by UDF finally blocks, so only the synthetic top frame survives.
-				systemOutput( "skipping: needs Lucee throw-site notify hook", true );
-				return;
 
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 
@@ -179,11 +174,6 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 					systemOutput( "skipping: exception breakpoints not supported", true );
 					return;
 				}
-				// Gated on Lucee core change — see native-exception-suspend-timing.md.
-				// Arguments/Local scopes are torn down with the frames before we see
-				// the uncaught exception, so only top-level scopes are available.
-				systemOutput( "skipping: needs Lucee throw-site notify hook", true );
-				return;
 
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 
