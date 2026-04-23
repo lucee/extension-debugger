@@ -47,11 +47,6 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 			// Needs a separate notify path that fires before the thread dies.
 			// Separate bug, out of scope for LDEV-6282.
 			xit( "RequestTimeoutException DOES trigger the uncaught breakpoint", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-timeout-target.cfm", {}, true );
 

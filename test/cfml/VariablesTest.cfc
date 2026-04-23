@@ -1,7 +1,7 @@
 /**
  * Tests for variables and scopes inspection.
  *
- * BDD style — runtime guards inside each `it`.
+ * BDD style — skip=notSupportsBreakpointLocations() on capability-gated specs.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -46,12 +46,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "native: target debugLine is a valid breakpoint location", function() {
-				if ( !supportsBreakpointLocations() ) {
-					systemOutput( "skipping: breakpointLocations not supported", true );
-					return;
-				}
-
+			it( title="native: target debugLine is a valid breakpoint location", body=function() {
 				var locations = dap.breakpointLocations( variables.targetFile, 1, 45 );
 				var validLines = locations.body.breakpoints.map( function( bp ) { return bp.line; } );
 
@@ -61,7 +56,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 					var line = variables.lines[ key ];
 					expect( validLines ).toInclude( line, "#variables.targetFile# line #line# (#key#) should be a valid breakpoint location" );
 				}
-			} );
+			}, skip=notSupportsBreakpointLocations() );
 
 			it( "reports Local and Arguments scopes at a UDF breakpoint", function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );

@@ -44,12 +44,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "top-level compile error does NOT fire the uncaught breakpoint", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="top-level compile error does NOT fire the uncaught breakpoint", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-compile-broken.cfm", {}, true );
 
@@ -57,14 +52,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( dap.hasEvent( "stopped" ) ).toBeFalse( "Top-level compile error has no live CFML frame — should not fire uncaught-bp" );
 
 				waitForHttpComplete();
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "nested compile error DOES fire the uncaught breakpoint on the wrapper frame", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="nested compile error DOES fire the uncaught breakpoint on the wrapper frame", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-compile-wrapper.cfm", {}, true );
 
@@ -86,7 +76,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( wrapperSeen ).toBeTrue( "Stack should contain the wrapper frame that did the bad include" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
 		} );
 	}

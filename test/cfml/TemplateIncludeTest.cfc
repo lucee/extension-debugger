@@ -190,15 +190,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 			describe( "Frame metadata (native mode)", function() {
 
-				// Runtime guard, not BDD skip= — skip= evaluates at spec-register
-				// time before beforeAll runs setupDap, so isNativeMode() would
-				// always read false there.
-				it( "include frame name is the included file's basename", function() {
-					if ( !isNativeMode() ) {
-						systemOutput( "frameName: agent mode — skipping native-only Part D test", true );
-						return;
-					}
-
+				it( title="include frame name is the included file's basename", body=function() {
 					var bpPath = getArtifactPath( "udfInclude/inner.cfm" );
 
 					triggerArtifact( "udfInclude/index.cfm" );
@@ -219,7 +211,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 					cleanupThread( stopped.body.threadId );
 					clearBreakpoints( bpPath );
-				} );
+				}, skip=notNativeMode() );
 			} );
 
 			describe( "Regression guards for the core fix", function() {

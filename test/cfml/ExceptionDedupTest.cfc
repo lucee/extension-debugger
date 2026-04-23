@@ -42,12 +42,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "no cftry — exactly one stopped event per uncaught throw", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="no cftry — exactly one stopped event per uncaught throw", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false }, true );
 
@@ -66,14 +61,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( extraStops ).toBe( 0, "No-cftry uncaught throw should fire exactly one stopped event" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "non-matching cftry — exactly one stopped event per uncaught throw", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="non-matching cftry — exactly one stopped event per uncaught throw", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-nonmatch-target.cfm", { throwException: true }, true );
 
@@ -92,7 +82,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( extraStops ).toBe( 0, "Throw through non-matching cftry should fire exactly one stopped event" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
 		} );
 	}

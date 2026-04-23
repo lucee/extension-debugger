@@ -42,12 +42,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "cfabort does NOT trigger the uncaught breakpoint", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="cfabort does NOT trigger the uncaught breakpoint", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-silent-target.cfm", { mode: "abort" } );
 
@@ -55,14 +50,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( dap.hasEvent( "stopped" ) ).toBeFalse( "cfabort is isSilentAbort — must not fire the uncaught breakpoint" );
 
 				waitForHttpComplete();
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "cfcontent file= does NOT trigger the uncaught breakpoint", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="cfcontent file= does NOT trigger the uncaught breakpoint", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-silent-target.cfm", { mode: "content" } );
 
@@ -70,7 +60,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( dap.hasEvent( "stopped" ) ).toBeFalse( "cfcontent file= throws PostContentAbort which is isSilentAbort — must not fire the uncaught breakpoint" );
 
 				waitForHttpComplete();
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
 		} );
 	}

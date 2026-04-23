@@ -4,6 +4,8 @@
  * Holds the execution context constant (UDF-in-cfm via exception-target.cfm)
  * and varies how the exception is produced. Each case asserts the debugger
  * can report ≥2 frames and inspect the throwing function's scope.
+ *
+ * BDD style — skip= uses capabilities probed at include-time via DapTestCase.cfm.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -44,12 +46,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "cfthrow message= (no type) stops with frames intact", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="cfthrow message= (no type) stops with frames intact", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false, throwMode: "message" }, true );
 
@@ -66,14 +63,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( shouldThrow.value.lcase() ).toBe( "true" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "cfthrow object= (rethrow) stops with frames intact", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="cfthrow object= (rethrow) stops with frames intact", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false, throwMode: "object" }, true );
 
@@ -86,14 +78,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( frames[ 1 ].name ).toInclude( "riskyFunction" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "CasterException (int('abc')) stops with frames intact", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="CasterException (int('abc')) stops with frames intact", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false, throwMode: "caster" }, true );
 
@@ -106,14 +93,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( frames[ 1 ].name ).toInclude( "riskyFunction" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "UndefinedImpl (missing variable) stops with frames intact", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="UndefinedImpl (missing variable) stops with frames intact", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false, throwMode: "undefined" }, true );
 
@@ -126,14 +108,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( frames[ 1 ].name ).toInclude( "riskyFunction" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "cfrethrow in catch stops exactly once with frames intact", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="cfrethrow in catch stops exactly once with frames intact", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-rethrow-target.cfm", { throwException: true }, true );
 
@@ -157,7 +134,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( extraStops ).toBe( 0, "rethrow of already-notified PE should not fire a second stopped event" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
 			// Probes whether cfcatch subclass fields (detail, errorCode, extendedInfo) are
 			// populated at the uncaught-exception stop. A notify fired inside
@@ -165,12 +142,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 			// CustomTypeException subclass ctor has not run setDetail yet); a notify
 			// fired at the throw statement sees the fully-built PE. Also measures
 			// current-prod behaviour on the listener-injected cfcatch scope.
-			it( "cfthrow type= preserves detail/errorCode in cfcatch at uncaught stop", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="cfthrow type= preserves detail/errorCode in cfcatch at uncaught stop", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false, throwMode: "type" }, true );
 
@@ -188,19 +160,14 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( varMap.detail ).toInclude( "This is for testing", "cfcatch.detail should preserve the cfthrow detail= attribute" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
 			// Top-level 404 — request URL resolves to a template that doesn't exist.
 			// There is no live user frame to suspend on (the template never ran), so
 			// the uncaught-exception breakpoint MUST NOT fire. Lucee still logs the
 			// MissingIncludeException to the console and returns a 404; that's the
 			// appropriate surface area for this case.
-			it( "MissingIncludeException (top-level 404) does NOT fire the uncaught breakpoint", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="MissingIncludeException (top-level 404) does NOT fire the uncaught breakpoint", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "this-template-does-not-exist.cfm", {}, true );
 
@@ -208,19 +175,14 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( dap.hasEvent( "stopped" ) ).toBeFalse( "Top-level 404 has no live frame to break on — uncaught breakpoint must not fire" );
 
 				waitForHttpComplete();
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
 			// Nested variant: outer .cfm exists and includes a template that
 			// doesn't. MissingIncludeException is thrown from PageSourceImpl.loadPage
 			// while the outer _doInclude frame is still live, so the stack MUST
 			// contain the outer parent frame (whether or not the fix also surfaces
 			// a synthetic frame for the missing template).
-			it( "MissingIncludeException from nested cfinclude exposes outer frame", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="MissingIncludeException from nested cfinclude exposes outer frame", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-nested-missing-include-target.cfm", {}, true );
 
@@ -242,14 +204,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( outerSeen ).toBeTrue( "Stack should contain the outer parent frame (exception-nested-missing-include-target.cfm)" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "UDFCasterException (bad return type) stops with frames intact", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="UDFCasterException (bad return type) stops with frames intact", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false, throwMode: "udfCaster" }, true );
 
@@ -262,7 +219,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( frames[ 1 ].name ).toInclude( "typedReturn" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
 		} );
 	}

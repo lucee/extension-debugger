@@ -14,6 +14,26 @@ variables.debuggeeArtifactPath = server.system.environment.DEBUGGEE_ARTIFACT_PAT
 variables.httpThread = "";
 variables.httpResult = {};
 
+// Probe capabilities once per JVM so skip= arguments on it() work at spec-register time,
+// before beforeAll() has run. setupDap() will overwrite variables.capabilities as normal.
+if ( !structKeyExists( server, "_dapCapabilities" ) ) {
+	variables._probeClient = new DapClient();
+	try {
+		variables._probeClient.connect(
+			server.system.environment.DAP_HOST ?: "localhost",
+			val( server.system.environment.DAP_PORT ?: 10000 )
+		);
+		server._dapCapabilities = variables._probeClient.initialize().body ?: {};
+	} catch ( any e ) {
+		server._dapCapabilities = {};
+		systemOutput( "DapTestCase: capability probe failed: #e.message#", true );
+	} finally {
+		try { variables._probeClient.disconnect(); } catch ( any e ) {}
+		variables._probeClient = javacast( "null", 0 );
+	}
+}
+variables.capabilities = server._dapCapabilities;
+
 function setupDap( boolean attach = true, boolean consoleOutput = false, string logLevel = "", boolean logExceptions = false, array pathTransforms = [] ) {
 	variables.dapHost = server.system.environment.DAP_HOST ?: "localhost";
 	variables.dapPort = val( server.system.environment.DAP_PORT ?: 10000 );

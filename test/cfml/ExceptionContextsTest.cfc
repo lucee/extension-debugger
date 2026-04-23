@@ -3,6 +3,8 @@
  *
  * Holds the origin constant (cfthrow type=) and varies where the throw
  * happens: top-level .cfm, component method, closure, cfthread.
+ *
+ * BDD style — skip= uses capabilities probed at include-time via DapTestCase.cfm.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -40,12 +42,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "top-level .cfm throw stops with a frame for the .cfm body", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="top-level .cfm throw stops with a frame for the .cfm body", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-toplevel-target.cfm", { throwException: true }, true );
 
@@ -58,14 +55,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				_expectPathEndsWith( frames[ 1 ].source.path, "exception-toplevel-target.cfm" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "component method throw stops with method + include frames", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="component method throw stops with method + include frames", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-component-target.cfm", { throwException: true }, true );
 
@@ -78,14 +70,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( frames[ 1 ].name ).toInclude( "throwFromMethod" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "closure throw stops with a frame at the closure body", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="closure throw stops with a frame at the closure body", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-closure-target.cfm", { throwException: true }, true );
 
@@ -98,7 +85,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				_expectPathEndsWith( frames[ 1 ].source.path, "exception-closure-target.cfm" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
 			// cfthread exceptions are caught internally by Lucee's thread runner and stored
 			// silently in the thread struct — never surface as uncaught on the cfthread's
@@ -106,11 +93,6 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 			// from the UDFImpl/include hooks. Separate bug, out of scope for LDEV-6282.
 			// throwOnError=true case is covered by the test below.
 			xit( "cfthread throw stops on a distinct thread", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-cfthread-target.cfm", { throwException: true } );
 
@@ -125,12 +107,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				cleanupThread( threadId );
 			} );
 
-			it( "cfthread join throwOnError=true re-throws in the calling thread and stops", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="cfthread join throwOnError=true re-throws in the calling thread and stops", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-cfthread-throwonerror-target.cfm", { throwException: true }, true );
 
@@ -142,19 +119,14 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( frames.len() ).toBeGTE( 1, "throwOnError join should expose at least the calling-thread frame" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
 			// Parallel arrayEach dispatches closures across a worker pool and rethrows
 			// the first failing invocation on the caller. The uncaught-exception stop
 			// may fire on a worker or the joined main thread — either is acceptable.
 			// Test only requires that SOME thread stops with a frame pointing back at
 			// the target file.
-			it( "parallel arrayEach closure throw stops with frame in the target", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="parallel arrayEach closure throw stops with frame in the target", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-parallel-arrayeach-target.cfm", { throwException: true }, true );
 
@@ -176,7 +148,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( targetSeen ).toBeTrue( "Stack should contain a frame pointing at exception-parallel-arrayeach-target.cfm" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
 		} );
 	}

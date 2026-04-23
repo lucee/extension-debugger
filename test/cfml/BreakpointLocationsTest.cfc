@@ -3,8 +3,7 @@
  *
  * This is a native-only feature that uses Page.getExecutableLines() from Lucee core.
  *
- * BDD style — runtime `isNativeMode()` guard inside each `it` (not `skip=`,
- * see DelayedVerifyTest.cfc:44-48 and feedback_testbox_style memory).
+ * BDD style — skip= uses capabilities probed at include-time via DapTestCase.cfm.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -28,38 +27,23 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "returns a breakpoints array for a single starting line", function() {
-				if ( !supportsBreakpointLocations() ) {
-					systemOutput( "skipping: breakpointLocations not supported", true );
-					return;
-				}
-
+			it( title="returns a breakpoints array for a single starting line", body=function() {
 				var response = dap.breakpointLocations( variables.targetFile, 1 );
 
 				expect( response.body ).toHaveKey( "breakpoints" );
 				expect( response.body.breakpoints ).toBeArray();
-			} );
+			}, skip=notSupportsBreakpointLocations() );
 
-			it( "reports a known executable line (line 12 inside simpleFunction)", function() {
-				if ( !supportsBreakpointLocations() ) {
-					systemOutput( "skipping: breakpointLocations not supported", true );
-					return;
-				}
-
+			it( title="reports a known executable line (line 12 inside simpleFunction)", body=function() {
 				var response = dap.breakpointLocations( variables.targetFile, 12 );
 
 				expect( response.body.breakpoints.len() ).toBeGTE( 1, "Line 12 should be executable" );
 
 				var location = response.body.breakpoints[ 1 ];
 				expect( location.line ).toBe( 12 );
-			} );
+			}, skip=notSupportsBreakpointLocations() );
 
-			it( "constrains results to the requested range (10-20)", function() {
-				if ( !supportsBreakpointLocations() ) {
-					systemOutput( "skipping: breakpointLocations not supported", true );
-					return;
-				}
-
+			it( title="constrains results to the requested range (10-20)", body=function() {
 				var response = dap.breakpointLocations( variables.targetFile, 10, 20 );
 
 				expect( response.body.breakpoints.len() ).toBeGT( 1, "Should have multiple executable lines in range" );
@@ -68,14 +52,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 					expect( loc.line ).toBeGTE( 10, "Line should be >= 10" );
 					expect( loc.line ).toBeLTE( 20, "Line should be <= 20" );
 				}
-			} );
+			}, skip=notSupportsBreakpointLocations() );
 
-			it( "does not mark a comment line as directly executable", function() {
-				if ( !supportsBreakpointLocations() ) {
-					systemOutput( "skipping: breakpointLocations not supported", true );
-					return;
-				}
-
+			it( title="does not mark a comment line as directly executable", body=function() {
 				// Line 3 is a comment. Either empty result or adjusted to a
 				// different line, but never line 3 itself.
 				var response = dap.breakpointLocations( variables.targetFile, 3, 3 );
@@ -83,24 +62,14 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				if ( response.body.breakpoints.len() > 0 ) {
 					expect( response.body.breakpoints[ 1 ].line ).notToBe( 3, "Comment line should not be directly executable" );
 				}
-			} );
+			}, skip=notSupportsBreakpointLocations() );
 
-			it( "does not error on a blank-or-trailing line (line 28)", function() {
-				if ( !supportsBreakpointLocations() ) {
-					systemOutput( "skipping: breakpointLocations not supported", true );
-					return;
-				}
-
+			it( title="does not error on a blank-or-trailing line (line 28)", body=function() {
 				var response = dap.breakpointLocations( variables.targetFile, 28, 28 );
 				expect( response.body ).toHaveKey( "breakpoints" );
-			} );
+			}, skip=notSupportsBreakpointLocations() );
 
-			it( "every returned location can be bound as a verified breakpoint", function() {
-				if ( !supportsBreakpointLocations() ) {
-					systemOutput( "skipping: breakpointLocations not supported", true );
-					return;
-				}
-
+			it( title="every returned location can be bound as a verified breakpoint", body=function() {
 				var response = dap.breakpointLocations( variables.targetFile, 1, 50 );
 
 				for ( var loc in response.body.breakpoints ) {
@@ -112,14 +81,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 				// Clean up all breakpoints bound above.
 				dap.setBreakpoints( variables.targetFile, [] );
-			} );
+			}, skip=notSupportsBreakpointLocations() );
 
-			it( "reports executable lines inside stepping-target.cfm's inner + outer funcs", function() {
-				if ( !supportsBreakpointLocations() ) {
-					systemOutput( "skipping: breakpointLocations not supported", true );
-					return;
-				}
-
+			it( title="reports executable lines inside stepping-target.cfm's inner + outer funcs", body=function() {
 				var steppingFile = getArtifactPath( "stepping-target.cfm" );
 				var response = dap.breakpointLocations( steppingFile, 1, 30 );
 
@@ -132,14 +96,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				//  the test was silently skipping, so the stale expectation went unnoticed.)
 				expect( lines ).toInclude( 9, "Line 9 (var doubled) inside innerFunc should be executable" );
 				expect( lines ).toInclude( 15, "Line 15 (innerFunc call) inside outerFunc should be executable" );
-			} );
+			}, skip=notSupportsBreakpointLocations() );
 
-			it( "reports line 35 of variables-target.cfm as executable (debugLine)", function() {
-				if ( !supportsBreakpointLocations() ) {
-					systemOutput( "skipping: breakpointLocations not supported", true );
-					return;
-				}
-
+			it( title="reports line 35 of variables-target.cfm as executable (debugLine)", body=function() {
 				var variablesFile = getArtifactPath( "variables-target.cfm" );
 				var response = dap.breakpointLocations( variablesFile, 1, 50 );
 
@@ -147,7 +106,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 				var lines = response.body.breakpoints.map( function( loc ) { return loc.line; } );
 				expect( lines ).toInclude( 35, "Line 35 should be executable" );
-			} );
+			}, skip=notSupportsBreakpointLocations() );
 
 		} );
 	}

@@ -2,7 +2,7 @@
  * Tests for console output streaming (systemOutput to debug console).
  * Native mode only — requires the consoleOutput attach option.
  *
- * BDD style — runtime guards inside each `it`.
+ * BDD style — skip= uses capabilities probed at include-time via DapTestCase.cfm.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -48,12 +48,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "native: target debugLine is a valid breakpoint location", function() {
-				if ( !supportsBreakpointLocations() ) {
-					systemOutput( "skipping: breakpointLocations not supported", true );
-					return;
-				}
-
+			it( title="native: target debugLine is a valid breakpoint location", body=function() {
 				var locations = dap.breakpointLocations( variables.targetFile, 1, 25 );
 				var validLines = locations.body.breakpoints.map( function( bp ) { return bp.line; } );
 
@@ -63,14 +58,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 					var line = variables.lines[ key ];
 					expect( validLines ).toInclude( line, "#variables.targetFile# line #line# (#key#) should be a valid breakpoint location" );
 				}
-			} );
+			}, skip=notSupportsBreakpointLocations() );
 
-			it( "native: emits an output event containing the systemOutput message", function() {
-				if ( !isNativeMode() ) {
-					systemOutput( "skipping: console output is native-only", true );
-					return;
-				}
-
+			it( title="native: emits an output event containing the systemOutput message", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 
 				var testMessage = "test-output-#createUUID()#";
@@ -94,14 +84,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( foundOutput ).toBeTrue( "Should receive output event with test message" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notNativeMode() );
 
-			it( "native: output event carries category = stdout", function() {
-				if ( !isNativeMode() ) {
-					systemOutput( "skipping: console output is native-only", true );
-					return;
-				}
-
+			it( title="native: output event carries category = stdout", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 
 				var testMessage = "category-test-#createUUID()#";
@@ -125,14 +110,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( outputEvent.body.category ).toBe( "stdout" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notNativeMode() );
 
-			it( "native: at least one output event fires per run", function() {
-				if ( !isNativeMode() ) {
-					systemOutput( "skipping: console output is native-only", true );
-					return;
-				}
-
+			it( title="native: at least one output event fires per run", body=function() {
 				// Target file has one systemOutput; this verifies the mechanism fires at all.
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 
@@ -155,7 +135,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( outputCount ).toBeGTE( 1, "Should have at least one output event" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notNativeMode() );
 
 		} );
 	}

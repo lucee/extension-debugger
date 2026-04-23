@@ -45,12 +45,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "onMissingTemplate that returns cleanly does NOT fire the uncaught breakpoint", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="onMissingTemplate that returns cleanly does NOT fire the uncaught breakpoint", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exceptionInOnMissingTemplate/missing.cfm", { mode: "clean" } );
 
@@ -58,14 +53,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( dap.hasEvent( "stopped" ) ).toBeFalse( "Clean onMissingTemplate handler absorbs the MIE — no uncaught-bp should fire" );
 
 				waitForHttpComplete();
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "onMissingTemplate that throws fires the uncaught breakpoint inside the handler", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="onMissingTemplate that throws fires the uncaught breakpoint inside the handler", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exceptionInOnMissingTemplate/missing.cfm", { mode: "throw" }, true );
 
@@ -78,7 +68,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( frames[ 1 ].name ).toInclude( "onMissingTemplate" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
 		} );
 	}

@@ -1,7 +1,7 @@
 /**
  * Tests for function breakpoints (break on function name without file/line).
  *
- * BDD style — runtime guards inside each `it`.
+ * BDD style — skip= uses capabilities probed at include-time via DapTestCase.cfm.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -42,24 +42,14 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "accepts a setFunctionBreakpoints call with a single function name", function() {
-				if ( !supportsFunctionBreakpoints() ) {
-					systemOutput( "skipping: function breakpoints not supported", true );
-					return;
-				}
-
+			it( title="accepts a setFunctionBreakpoints call with a single function name", body=function() {
 				var response = dap.setFunctionBreakpoints( [ "targetFunction" ] );
 
 				expect( response.body ).toHaveKey( "breakpoints" );
 				expect( response.body.breakpoints ).toHaveLength( 1 );
-			} );
+			}, skip=notSupportsFunctionBreakpoints() );
 
-			it( "stops execution when a function breakpoint's function is called", function() {
-				if ( !supportsFunctionBreakpoints() ) {
-					systemOutput( "skipping: function breakpoints not supported", true );
-					return;
-				}
-
+			it( title="stops execution when a function breakpoint's function is called", body=function() {
 				dap.setFunctionBreakpoints( [ "targetFunction" ] );
 				triggerArtifact( "function-bp-target.cfm" );
 
@@ -71,14 +61,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( frame.name ).toInclude( "targetFunction" );
 
 				cleanupThread( stopped.body.threadId );
-			} );
+			}, skip=notSupportsFunctionBreakpoints() );
 
-			it( "matches function names case-insensitively (TARGETFUNCTION)", function() {
-				if ( !supportsFunctionBreakpoints() ) {
-					systemOutput( "skipping: function breakpoints not supported", true );
-					return;
-				}
-
+			it( title="matches function names case-insensitively (TARGETFUNCTION)", body=function() {
 				dap.setFunctionBreakpoints( [ "TARGETFUNCTION" ] );
 				triggerArtifact( "function-bp-target.cfm" );
 
@@ -90,14 +75,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( frame.name.lcase() ).toInclude( "targetfunction" );
 
 				cleanupThread( stopped.body.threadId );
-			} );
+			}, skip=notSupportsFunctionBreakpoints() );
 
-			it( "supports wildcard function names (onRequest*)", function() {
-				if ( !supportsFunctionBreakpoints() ) {
-					systemOutput( "skipping: function breakpoints not supported", true );
-					return;
-				}
-
+			it( title="supports wildcard function names (onRequest*)", body=function() {
 				dap.setFunctionBreakpoints( [ "onRequest*" ] );
 				triggerArtifact( "function-bp-target.cfm" );
 
@@ -119,14 +99,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				} catch ( any e ) {
 					waitForHttpComplete();
 				}
-			} );
+			}, skip=notSupportsFunctionBreakpoints() );
 
-			it( "hits multiple distinct function breakpoints in the same run", function() {
-				if ( !supportsFunctionBreakpoints() ) {
-					systemOutput( "skipping: function breakpoints not supported", true );
-					return;
-				}
-
+			it( title="hits multiple distinct function breakpoints in the same run", body=function() {
 				dap.setFunctionBreakpoints( [ "targetFunction", "anotherFunction" ] );
 				triggerArtifact( "function-bp-target.cfm" );
 
@@ -149,14 +124,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				} catch ( any e ) {
 					waitForHttpComplete();
 				}
-			} );
+			}, skip=notSupportsFunctionBreakpoints() );
 
-			it( "honours a conditional function breakpoint (arguments.input == 'test-value')", function() {
-				if ( !supportsFunctionBreakpoints() ) {
-					systemOutput( "skipping: function breakpoints not supported", true );
-					return;
-				}
-
+			it( title="honours a conditional function breakpoint (arguments.input == 'test-value')", body=function() {
 				dap.setFunctionBreakpoints( [ "targetFunction" ], [ "arguments.input == 'test-value'" ] );
 				triggerArtifact( "function-bp-target.cfm" );
 
@@ -171,14 +141,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( inputVar.value ).toBe( '"test-value"' );
 
 				cleanupThread( stopped.body.threadId );
-			} );
+			}, skip=notSupportsFunctionBreakpoints() );
 
-			it( "clearing function breakpoints stops future hits", function() {
-				if ( !supportsFunctionBreakpoints() ) {
-					systemOutput( "skipping: function breakpoints not supported", true );
-					return;
-				}
-
+			it( title="clearing function breakpoints stops future hits", body=function() {
 				dap.setFunctionBreakpoints( [ "targetFunction" ] );
 				var response = dap.setFunctionBreakpoints( [] );
 
@@ -191,14 +156,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( hasStoppedEvent ).toBeFalse( "Should not stop after clearing breakpoints" );
 
 				waitForHttpComplete();
-			} );
+			}, skip=notSupportsFunctionBreakpoints() );
 
-			it( "replacing function breakpoints swaps the active set", function() {
-				if ( !supportsFunctionBreakpoints() ) {
-					systemOutput( "skipping: function breakpoints not supported", true );
-					return;
-				}
-
+			it( title="replacing function breakpoints swaps the active set", body=function() {
 				dap.setFunctionBreakpoints( [ "targetFunction" ] );
 				var response = dap.setFunctionBreakpoints( [ "anotherFunction" ] );
 
@@ -212,7 +172,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( frame.name.lcase() ).toInclude( "anotherfunction" );
 
 				cleanupThread( stopped.body.threadId );
-			} );
+			}, skip=notSupportsFunctionBreakpoints() );
 
 		} );
 	}
