@@ -177,7 +177,11 @@ public class LuceeVm implements ILuceeVm {
     }
 
     private final ThreadMap threadMap_ = new ThreadMap();
-    private final ExecutorService stepHandlerExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService stepHandlerExecutor = Executors.newSingleThreadExecutor(r -> {
+        var t = new Thread(r, "luceedebug-step-handler");
+        t.setDaemon(true);
+        return t;
+    });
     private final ConcurrentHashMap<CanonicalServerAbsPath, Set<ReplayableCfBreakpointRequest>> replayableBreakpointRequestsByAbsPath_ = new ConcurrentHashMap<>();
     
     /**

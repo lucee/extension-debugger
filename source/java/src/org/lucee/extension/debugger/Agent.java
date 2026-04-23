@@ -265,6 +265,11 @@ public class Agent {
         // TODO: clarify the exact failure case we are attempting to workaround here.
         System.out.println("[luceedebug] version " + Version.VERSION);
 
+        if (System.getenv("LUCEE_ENABLE_WARMUP") != null) {
+            System.out.println("[luceedebug] warmup mode detected, skipping initialization");
+            return;
+        }
+
         try (var jarFile = new JarFile(parsedArgs.jarPath)) {
             inst.appendToSystemClassLoaderSearch(jarFile);
             var classInjections = jarFile
