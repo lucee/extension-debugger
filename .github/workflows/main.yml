@@ -665,7 +665,7 @@ jobs:
     name: Deploy to Maven Central
     runs-on: ubuntu-latest
     needs: [test-extension, test-agent]
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true' && github.ref == 'refs/heads/main' }}
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout
@@ -690,6 +690,13 @@ jobs:
           echo "$GPG_PRIVATE_KEY" | base64 --decode | gpg --batch --import
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - name: Check secrets
+        env:
+          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+        run: |
+          if [[ -z "${MAVEN_USERNAME}" ]]; then echo "MAVEN_USERNAME is empty - secrets not configured"; exit 1; fi
+          echo "MAVEN_USERNAME length: ${#MAVEN_USERNAME}"
 
       - name: Deploy extension to Maven Central
         run: mvn -B -e clean deploy -Dgoal=deploy -DperformRelease=true --settings maven-settings.xml
