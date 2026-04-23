@@ -159,6 +159,91 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				cleanupThread( threadId );
 			} );
 
+			// Probes whether cfcatch subclass fields (detail, errorCode, extendedInfo) are
+			// populated at the uncaught-exception stop. A notify fired inside
+			// PageExceptionImpl's base constructor would see an empty detail (the
+			// CustomTypeException subclass ctor has not run setDetail yet); a notify
+			// fired at the throw statement sees the fully-built PE. Also measures
+			// current-prod behaviour on the listener-injected cfcatch scope.
+			it( "cfthrow type= preserves detail/errorCode in cfcatch at uncaught stop", function() {
+				if ( !supportsExceptionBreakpoints() ) {
+					systemOutput( "skipping: exception breakpoints not supported", true );
+					return;
+				}
+
+				dap.setExceptionBreakpoints( [ "uncaught" ] );
+				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false, throwMode: "type" }, true );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				expect( stopped.body.reason ).toBe( "exception" );
+				var threadId = stopped.body.threadId;
+
+				var frame = getTopFrame( threadId );
+				var cfcatchScope = getScopeByName( frame.id, "cfcatch" );
+				var vars = dap.getVariables( cfcatchScope.variablesReference ).body.variables;
+				var varMap = {};
+				for ( var v in vars ) { varMap[ v.name ] = v.value; }
+
+				expect( varMap ).toHaveKey( "detail", "cfcatch should expose detail" );
+				expect( varMap.detail ).toInclude( "This is for testing", "cfcatch.detail should preserve the cfthrow detail= attribute" );
+
+				cleanupThread( threadId );
+			} );
+
+			// Top-level 404 — request URL resolves to a template that doesn't exist.
+			// There is no live user frame to suspend on (the template never ran), so
+			// the uncaught-exception breakpoint MUST NOT fire. Lucee still logs the
+			// MissingIncludeException to the console and returns a 404; that's the
+			// appropriate surface area for this case.
+			it( "MissingIncludeException (top-level 404) does NOT fire the uncaught breakpoint", function() {
+				if ( !supportsExceptionBreakpoints() ) {
+					systemOutput( "skipping: exception breakpoints not supported", true );
+					return;
+				}
+
+				dap.setExceptionBreakpoints( [ "uncaught" ] );
+				triggerArtifact( "this-template-does-not-exist.cfm", {}, true );
+
+				sleep( 2000 );
+				expect( dap.hasEvent( "stopped" ) ).toBeFalse( "Top-level 404 has no live frame to break on — uncaught breakpoint must not fire" );
+
+				waitForHttpComplete();
+			} );
+
+			// Nested variant: outer .cfm exists and includes a template that
+			// doesn't. MissingIncludeException is thrown from PageSourceImpl.loadPage
+			// while the outer _doInclude frame is still live, so the stack MUST
+			// contain the outer parent frame (whether or not the fix also surfaces
+			// a synthetic frame for the missing template).
+			it( "MissingIncludeException from nested cfinclude exposes outer frame", function() {
+				if ( !supportsExceptionBreakpoints() ) {
+					systemOutput( "skipping: exception breakpoints not supported", true );
+					return;
+				}
+
+				dap.setExceptionBreakpoints( [ "uncaught" ] );
+				triggerArtifact( "exception-nested-missing-include-target.cfm", {}, true );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				expect( stopped.body.reason ).toBe( "exception" );
+				var threadId = stopped.body.threadId;
+
+				var frames = dap.stackTrace( threadId ).body.stackFrames;
+				expect( frames.len() ).toBeGTE( 1, "MissingIncludeException from nested cfinclude should expose at least one frame" );
+
+				var outerSeen = false;
+				for ( var frame in frames ) {
+					var path = replace( frame.source.path ?: "", "\", "/", "all" );
+					if ( right( path, len( "exception-nested-missing-include-target.cfm" ) ) == "exception-nested-missing-include-target.cfm" ) {
+						outerSeen = true;
+						break;
+					}
+				}
+				expect( outerSeen ).toBeTrue( "Stack should contain the outer parent frame (exception-nested-missing-include-target.cfm)" );
+
+				cleanupThread( threadId );
+			} );
+
 			it( "UDFCasterException (bad return type) stops with frames intact", function() {
 				if ( !supportsExceptionBreakpoints() ) {
 					systemOutput( "skipping: exception breakpoints not supported", true );

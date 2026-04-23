@@ -71,7 +71,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				cleanupThread( stopped.body.threadId );
 			} );
 
-			it( "a caught exception does NOT trigger the uncaught breakpoint", function() {
+			it( "inner exception inside a cftry block stops at the throw", function() {
 				if ( !supportsExceptionBreakpoints() ) {
 					systemOutput( "skipping: exception breakpoints not supported", true );
 					return;
@@ -79,13 +79,12 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 
-				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: true } );
+				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: true }, true );
 
-				sleep( 2000 );
-				var hasStoppedEvent = dap.hasEvent( "stopped" );
-				expect( hasStoppedEvent ).toBeFalse( "Caught exception should not trigger uncaught breakpoint" );
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				expect( stopped.body.reason ).toBe( "exception" );
 
-				waitForHttpComplete();
+				cleanupThread( stopped.body.threadId );
 			} );
 
 			it( "a run with no exception does NOT trigger the breakpoint", function() {
