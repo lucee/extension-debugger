@@ -1,7 +1,7 @@
 /**
  * Tests for exception breakpoints (break on uncaught exceptions).
  *
- * BDD style — runtime guards inside each `it`.
+ * BDD style — skip=notSupportsExceptionBreakpoints() on capability-gated specs.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -54,12 +54,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( response.success ).toBeTrue();
 			} );
 
-			it( "an uncaught exception triggers a stopped event with reason=exception", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="an uncaught exception triggers a stopped event with reason=exception", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 
 				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false }, true );
@@ -69,31 +64,20 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( stopped.body.reason ).toBe( "exception" );
 
 				cleanupThread( stopped.body.threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "a caught exception does NOT trigger the uncaught breakpoint", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="inner exception inside a cftry block stops at the throw", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 
-				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: true } );
+				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: true }, true );
 
-				sleep( 2000 );
-				var hasStoppedEvent = dap.hasEvent( "stopped" );
-				expect( hasStoppedEvent ).toBeFalse( "Caught exception should not trigger uncaught breakpoint" );
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				expect( stopped.body.reason ).toBe( "exception" );
 
-				waitForHttpComplete();
-			} );
+				cleanupThread( stopped.body.threadId );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "a run with no exception does NOT trigger the breakpoint", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="a run with no exception does NOT trigger the breakpoint", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 
 				triggerArtifact( "exception-target.cfm", { throwException: false, catchException: false } );
@@ -103,14 +87,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( hasStoppedEvent ).toBeFalse( "No exception should not trigger breakpoint" );
 
 				waitForHttpComplete();
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "exceptionInfo returns description and exceptionId", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="exceptionInfo returns description and exceptionId", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 
 				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false }, true );
@@ -125,14 +104,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( exceptionInfo.body.description ).toInclude( "Intentional test exception" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "exceptionInfo.exceptionId includes the exception type name (TestException)", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="exceptionInfo.exceptionId includes the exception type name (TestException)", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 
 				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false }, true );
@@ -145,19 +119,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( exceptionInfo.body.exceptionId ).toInclude( "TestException" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "stack trace at exception shows the throwing function on top", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-				// Gated on Lucee core change — see native-exception-suspend-timing.md.
-				// The uncaught-exception signal fires after debuggerFrames has been
-				// popped by UDF finally blocks, so only the synthetic top frame survives.
-				systemOutput( "skipping: needs Lucee throw-site notify hook", true );
-				return;
-
+			it( title="stack trace at exception shows the throwing function on top", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 
 				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false }, true );
@@ -172,19 +136,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( frames[ 1 ].name ).toInclude( "riskyFunction" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "variables are inspectable when stopped at an exception", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-				// Gated on Lucee core change — see native-exception-suspend-timing.md.
-				// Arguments/Local scopes are torn down with the frames before we see
-				// the uncaught exception, so only top-level scopes are available.
-				systemOutput( "skipping: needs Lucee throw-site notify hook", true );
-				return;
-
+			it( title="variables are inspectable when stopped at an exception", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 
 				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false }, true );
@@ -199,14 +153,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( shouldThrow.value.lcase() ).toBe( "true" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "continuing after an exception lets it propagate and the HTTP request completes", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="continuing after an exception lets it propagate and the HTTP request completes", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 
 				triggerArtifact( "exception-target.cfm", { throwException: true, catchException: false }, true );
@@ -218,14 +167,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 				var result = waitForHttpComplete();
 				expect( result ).toHaveKey( "status" );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "logExceptions=true: exception details appear as stderr output events", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="logExceptions=true: exception details appear as stderr output events", body=function() {
 				teardownDap();
 				setupDap( logLevel = "info", logExceptions = true );
 
@@ -257,14 +201,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				teardownDap();
 				setupDap();
 				variables.targetFile = getArtifactPath( "exception-target.cfm" );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "logExceptions=false: exception details are NOT output events", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="logExceptions=false: exception details are NOT output events", body=function() {
 				teardownDap();
 				setupDap( logExceptions = false );
 
@@ -286,14 +225,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( foundExceptionLog ).toBeFalse( "Exception should NOT be logged to debug console when logExceptions=false" );
 
 				cleanupThread( stopped.body.threadId );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
-			it( "logLevel=debug: onException calls appear as DEBUG-level output events", function() {
-				if ( !supportsExceptionBreakpoints() ) {
-					systemOutput( "skipping: exception breakpoints not supported", true );
-					return;
-				}
-
+			it( title="logLevel=debug: onException calls appear as DEBUG-level output events", body=function() {
 				teardownDap();
 				setupDap( logLevel = "debug" );
 
@@ -324,7 +258,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				teardownDap();
 				setupDap();
 				variables.targetFile = getArtifactPath( "exception-target.cfm" );
-			} );
+			}, skip=notSupportsExceptionBreakpoints() );
 
 		} );
 	}

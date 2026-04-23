@@ -1,7 +1,7 @@
 /**
  * Tests for basic breakpoint functionality.
  *
- * BDD style — runtime guards inside each `it`.
+ * BDD style — skip= uses capabilities probed at include-time via DapTestCase.cfm.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -49,12 +49,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "native: all tracked line numbers in breakpoint-target are valid", function() {
-				if ( !supportsBreakpointLocations() ) {
-					systemOutput( "skipping: breakpointLocations not supported", true );
-					return;
-				}
-
+			it( title="native: all tracked line numbers in breakpoint-target are valid", body=function() {
 				var locations = dap.breakpointLocations( variables.targetFile, 1, 30 );
 				var validLines = locations.body.breakpoints.map( function( bp ) { return bp.line; } );
 
@@ -64,7 +59,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 					var line = variables.lines[ key ];
 					expect( validLines ).toInclude( line, "#variables.targetFile# line #line# (#key#) should be a valid breakpoint location" );
 				}
-			} );
+			}, skip=notSupportsBreakpointLocations() );
 
 			it( "setBreakpoints returns a verified breakpoint (native) / placeholder (agent)", function() {
 				// Uses the dedicated never-triggered target so agent-mode returns the
@@ -145,12 +140,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( response.body.breakpoints[ 1 ].line ).toBe( lines.writeOutput );
 			} );
 
-			it( "conditional breakpoint hits when the condition is true (value > 10, called with 15)", function() {
-				if ( !supportsConditionalBreakpoints() ) {
-					systemOutput( "skipping: conditional breakpoints not supported", true );
-					return;
-				}
-
+			it( title="conditional breakpoint hits when the condition is true (value > 10, called with 15)", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.ifBlockBody ], [ "arguments.value > 10" ] );
 
 				triggerArtifact( "breakpoint-target.cfm" );
@@ -165,14 +155,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( frame.line ).toBe( lines.ifBlockBody );
 
 				cleanupThread( stopped.body.threadId );
-			} );
+			}, skip=notSupportsConditionalBreakpoints() );
 
-			it( "conditional breakpoint skips when the condition is false (value > 100, called with 15)", function() {
-				if ( !supportsConditionalBreakpoints() ) {
-					systemOutput( "skipping: conditional breakpoints not supported", true );
-					return;
-				}
-
+			it( title="conditional breakpoint skips when the condition is false (value > 100, called with 15)", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.ifBlockBody ], [ "arguments.value > 100" ] );
 
 				triggerArtifact( "breakpoint-target.cfm" );
@@ -186,7 +171,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( hasStoppedEvent ).toBeFalse( "Should not stop when condition is false" );
 
 				waitForHttpComplete();
-			} );
+			}, skip=notSupportsConditionalBreakpoints() );
 
 		} );
 	}

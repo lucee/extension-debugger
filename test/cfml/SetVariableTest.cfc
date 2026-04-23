@@ -1,7 +1,7 @@
 /**
  * Tests for setVariable functionality (modifying variables at runtime).
  *
- * BDD style — runtime guards inside each `it`.
+ * BDD style — skip= uses capabilities probed at include-time via DapTestCase.cfm.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -47,12 +47,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "native: checkpoint lines are valid breakpoint locations", function() {
-				if ( !supportsBreakpointLocations() ) {
-					systemOutput( "skipping: breakpointLocations not supported", true );
-					return;
-				}
-
+			it( title="native: checkpoint lines are valid breakpoint locations", body=function() {
 				var locations = dap.breakpointLocations( variables.targetFile, 1, 30 );
 				var validLines = locations.body.breakpoints.map( function( bp ) { return bp.line; } );
 
@@ -62,14 +57,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 					var line = variables.lines[ key ];
 					expect( validLines ).toInclude( line, "#variables.targetFile# line #line# (#key#) should be a valid breakpoint location" );
 				}
-			} );
+			}, skip=notSupportsBreakpointLocations() );
 
-			it( "modifies a local string variable and the new value is visible on re-read", function() {
-				if ( !supportsSetVariable() ) {
-					systemOutput( "skipping: setVariable not supported", true );
-					return;
-				}
-
+			it( title="modifies a local string variable and the new value is visible on re-read", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.checkpoint1 ] );
 				triggerArtifact( "set-variable-target.cfm" );
 
@@ -89,14 +79,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( updatedVar.value ).toBe( '"modified"' );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsSetVariable() );
 
-			it( "modifies a local numeric variable", function() {
-				if ( !supportsSetVariable() ) {
-					systemOutput( "skipping: setVariable not supported", true );
-					return;
-				}
-
+			it( title="modifies a local numeric variable", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.checkpoint1 ] );
 				triggerArtifact( "set-variable-target.cfm" );
 
@@ -113,14 +98,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( setResponse.body.value ).toBe( "999" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsSetVariable() );
 
-			it( "modified values are observable by subsequent execution (to the next breakpoint)", function() {
-				if ( !supportsSetVariable() ) {
-					systemOutput( "skipping: setVariable not supported", true );
-					return;
-				}
-
+			it( title="modified values are observable by subsequent execution (to the next breakpoint)", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.checkpoint1, lines.checkpoint2 ] );
 				triggerArtifact( "set-variable-target.cfm" );
 
@@ -145,14 +125,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( result.value ).toBe( '"CHANGED - 555"' );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsSetVariable() );
 
-			it( "modifies a boolean variable", function() {
-				if ( !supportsSetVariable() ) {
-					systemOutput( "skipping: setVariable not supported", true );
-					return;
-				}
-
+			it( title="modifies a boolean variable", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.checkpoint1 ] );
 				triggerArtifact( "set-variable-target.cfm" );
 
@@ -172,7 +147,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( setResponse.body.value.lcase() ).toBe( "false" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsSetVariable() );
 
 		} );
 	}

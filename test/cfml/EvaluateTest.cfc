@@ -1,7 +1,7 @@
 /**
  * Tests for evaluate/expression functionality.
  *
- * BDD style — runtime guards inside each `it`.
+ * BDD style — skip= uses capabilities probed at include-time via DapTestCase.cfm.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -46,12 +46,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "native: target debugLine is a valid breakpoint location", function() {
-				if ( !supportsBreakpointLocations() ) {
-					systemOutput( "skipping: breakpointLocations not supported", true );
-					return;
-				}
-
+			it( title="native: target debugLine is a valid breakpoint location", body=function() {
 				var locations = dap.breakpointLocations( variables.targetFile, 1, 40 );
 				var validLines = locations.body.breakpoints.map( function( bp ) { return bp.line; } );
 
@@ -61,14 +56,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 					var line = variables.lines[ key ];
 					expect( validLines ).toInclude( line, "#variables.targetFile# line #line# (#key#) should be a valid breakpoint location" );
 				}
-			} );
+			}, skip=notSupportsBreakpointLocations() );
 
-			it( "evaluates a simple arithmetic expression", function() {
-				if ( !supportsEvaluate() ) {
-					systemOutput( "skipping: evaluate not supported", true );
-					return;
-				}
-
+			it( title="evaluates a simple arithmetic expression", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "evaluate-target.cfm" );
 
@@ -81,14 +71,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( evalResponse.body.result ).toBe( "2" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsEvaluate() );
 
-			it( "evaluates a local string variable", function() {
-				if ( !supportsEvaluate() ) {
-					systemOutput( "skipping: evaluate not supported", true );
-					return;
-				}
-
+			it( title="evaluates a local string variable", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "evaluate-target.cfm" );
 
@@ -101,14 +86,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( evalResponse.body.result ).toBe( '"local-value"' );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsEvaluate() );
 
-			it( "evaluates a local numeric variable", function() {
-				if ( !supportsEvaluate() ) {
-					systemOutput( "skipping: evaluate not supported", true );
-					return;
-				}
-
+			it( title="evaluates a local numeric variable", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "evaluate-target.cfm" );
 
@@ -121,14 +101,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( evalResponse.body.result ).toBe( "100" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsEvaluate() );
 
-			it( "evaluates a struct key access (localStruct.key1)", function() {
-				if ( !supportsEvaluate() ) {
-					systemOutput( "skipping: evaluate not supported", true );
-					return;
-				}
-
+			it( title="evaluates a struct key access (localStruct.key1)", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "evaluate-target.cfm" );
 
@@ -141,14 +116,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( evalResponse.body.result ).toBe( '"value1"' );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsEvaluate() );
 
-			it( "evaluates a nested struct key (localStruct.nested.inner)", function() {
-				if ( !supportsEvaluate() ) {
-					systemOutput( "skipping: evaluate not supported", true );
-					return;
-				}
-
+			it( title="evaluates a nested struct key (localStruct.nested.inner)", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "evaluate-target.cfm" );
 
@@ -161,14 +131,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( evalResponse.body.result ).toBe( '"deep"' );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsEvaluate() );
 
-			it( "evaluates an array element access (localArray[2])", function() {
-				if ( !supportsEvaluate() ) {
-					systemOutput( "skipping: evaluate not supported", true );
-					return;
-				}
-
+			it( title="evaluates an array element access (localArray[2])", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "evaluate-target.cfm" );
 
@@ -181,14 +146,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( evalResponse.body.result ).toBe( "20" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsEvaluate() );
 
-			it( "evaluates arguments-scope access (arguments.data.name)", function() {
-				if ( !supportsEvaluate() ) {
-					systemOutput( "skipping: evaluate not supported", true );
-					return;
-				}
-
+			it( title="evaluates arguments-scope access (arguments.data.name)", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "evaluate-target.cfm" );
 
@@ -201,14 +161,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( evalResponse.body.result ).toBe( '"test-input"' );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsEvaluate() );
 
-			it( "evaluates a string concatenation expression", function() {
-				if ( !supportsEvaluate() ) {
-					systemOutput( "skipping: evaluate not supported", true );
-					return;
-				}
-
+			it( title="evaluates a string concatenation expression", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "evaluate-target.cfm" );
 
@@ -221,14 +176,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( evalResponse.body.result ).toBe( '"local-value - test-input"' );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsEvaluate() );
 
-			it( "evaluates a math expression with variables", function() {
-				if ( !supportsEvaluate() ) {
-					systemOutput( "skipping: evaluate not supported", true );
-					return;
-				}
-
+			it( title="evaluates a math expression with variables", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "evaluate-target.cfm" );
 
@@ -241,14 +191,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( evalResponse.body.result ).toBe( "250" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsEvaluate() );
 
-			it( "evaluates a built-in function call (len)", function() {
-				if ( !supportsEvaluate() ) {
-					systemOutput( "skipping: evaluate not supported", true );
-					return;
-				}
-
+			it( title="evaluates a built-in function call (len)", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "evaluate-target.cfm" );
 
@@ -261,14 +206,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( evalResponse.body.result ).toBe( "11" ); // "local-value" = 11 chars
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsEvaluate() );
 
-			it( "evaluates arrayLen on a local array", function() {
-				if ( !supportsEvaluate() ) {
-					systemOutput( "skipping: evaluate not supported", true );
-					return;
-				}
-
+			it( title="evaluates arrayLen on a local array", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "evaluate-target.cfm" );
 
@@ -281,7 +221,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( evalResponse.body.result ).toBe( "3" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsEvaluate() );
 
 		} );
 	}

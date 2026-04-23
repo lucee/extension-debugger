@@ -13,7 +13,7 @@
  * Agent / JDWP mode (LuceeVm.getThreadListing): enumerates the JDWP thread map,
  * no virtual entry, no suspended suffix.
  *
- * BDD style — see GetApplicationSettingsTest for why `skip="fn"` doesn't work.
+ * BDD style — skip= uses capabilities probed at include-time via DapTestCase.cfm.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -57,12 +57,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "native: listing contains the virtual 'All CFML Threads' entry before any breakpoint", function() {
-				if ( !isNativeMode() ) {
-					systemOutput( "skipping: virtual entry is native-mode only", true );
-					return;
-				}
-
+			it( title="native: listing contains the virtual 'All CFML Threads' entry before any breakpoint", body=function() {
 				var response = dap.threads();
 
 				expect( response ).toHaveKey( "body" );
@@ -73,14 +68,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 					return t.id == 1 && t.name == "All CFML Threads";
 				} );
 				expect( arrayLen( virtualEntries ) ).toBe( 1, "virtual 'All CFML Threads' entry (id=1) should be present" );
-			} );
+			}, skip=notNativeMode() );
 
-			it( "native: listing includes the suspended thread and the virtual entry at a breakpoint", function() {
-				if ( !isNativeMode() ) {
-					systemOutput( "skipping: native-mode listing shape", true );
-					return;
-				}
-
+			it( title="native: listing includes the suspended thread and the virtual entry at a breakpoint", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "variables-target.cfm" );
 
@@ -113,14 +103,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( arrayLen( virtualEntries ) ).toBe( 1, "virtual 'All CFML Threads' entry must remain present while a real thread is suspended" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notNativeMode() );
 
-			it( "agent: listing contains the paused thread at a breakpoint", function() {
-				if ( isNativeMode() ) {
-					systemOutput( "skipping: agent-only listing shape", true );
-					return;
-				}
-
+			it( title="agent: listing contains the paused thread at a breakpoint", body=function() {
 				// Agent / JDWP mode has a different shape (no virtual entry,
 				// no (suspended) suffix), but the listing must still contain
 				// the paused thread when stopped at a breakpoint.
@@ -141,7 +126,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( arrayLen( matchingById ) ).toBe( 1, "stopped thread id must appear in the JDWP-mode listing" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=isNativeMode() );
 
 		} );
 	}

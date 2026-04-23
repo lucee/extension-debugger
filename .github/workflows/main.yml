@@ -38,11 +38,6 @@ jobs:
       lucee_branch: ${{ steps.set.outputs.lucee_branch }}
     steps:
       - id: set
-        # LDEV-6274 core fix landed in Lucee 7.1.0.95 (commit 77f59551d).
-        # Extension now requires 7.1.0.96+ via luceeCoreVersion in pom.xml,
-        # so we no longer build Lucee from the patch branch — fall back to
-        # the published cdn release. Leave the build-lucee-71 job in place
-        # for future use against other pre-release core patches.
         run: echo "lucee_branch=" >> "$GITHUB_OUTPUT"
 
   # Prime Maven cache by running script-runner once
@@ -68,7 +63,7 @@ jobs:
         with:
           webroot: ${{ github.workspace }}/
           execute: /prime-cache.cfm
-          luceeVersionQuery: 7.0/all/light
+          luceeVersion: 7.0/all/light
 
   # Build Lucee 7.1 from the branch defined in the config job.
   # Skipped entirely when config.outputs.lucee_branch is empty — test-extension

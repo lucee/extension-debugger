@@ -13,10 +13,7 @@
  * from artifacts/appSettings/Application.cfc) expose silent divergence
  * between the reflective call and what the BIF would return.
  *
- * BDD style (describe/it + runtime isNativeMode() guards) is the only pattern
- * where the per-spec skip machinery works — see DelayedVerifyTest for the
- * rationale. xUnit `skip="fn"` evaluates the string as a truthy boolean so
- * the test always skips.
+ * BDD style — skip= uses capabilities probed at include-time via DapTestCase.cfm.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -60,12 +57,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "native: target line is a valid breakpoint location", function() {
-				if ( !isNativeMode() ) {
-					systemOutput( "skipping: breakpointLocations is native-only", true );
-					return;
-				}
-
+			it( title="native: target line is a valid breakpoint location", body=function() {
 				var locations = dap.breakpointLocations( variables.targetFile, 1, 20 );
 				var validLines = locations.body.breakpoints.map( function( bp ) { return bp.line; } );
 
@@ -75,7 +67,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 					var line = variables.lines[ key ];
 					expect( validLines ).toInclude( line, "#variables.targetFile# line #line# (#key#) should be a valid breakpoint location" );
 				}
-			} );
+			}, skip=notNativeMode() );
 
 			it( "returns valid JSON with application name", function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
@@ -107,12 +99,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				cleanupThread( threadId );
 			} );
 
-			it( "native: reflects known this.* settings from Application.cfc", function() {
-				if ( !isNativeMode() ) {
-					systemOutput( "skipping: native-only assertion", true );
-					return;
-				}
-
+			it( title="native: reflects known this.* settings from Application.cfc", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "appSettings/index.cfm" );
 
@@ -135,14 +122,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( parsed.setClientCookies ).toBeFalse();
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notNativeMode() );
 
-			it( "native: server survives getApplicationSettings before any breakpoint", function() {
-				if ( !isNativeMode() ) {
-					systemOutput( "skipping: native-only server-survival guard", true );
-					return;
-				}
-
+			it( title="native: server survives getApplicationSettings before any breakpoint", body=function() {
 				// With no suspended frame to pull a PageContext from, native-mode
 				// returns a short JSON string describing the condition. The key
 				// assertion is that the call completes and the server stays alive
@@ -155,7 +137,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 				// Server still responsive.
 				expect( dap.threads() ).toHaveKey( "body" );
-			} );
+			}, skip=notNativeMode() );
 
 		} );
 	}

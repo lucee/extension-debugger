@@ -1,8 +1,7 @@
 /**
  * Tests for debug console completions/autocomplete functionality.
  *
- * BDD style — runtime guards inside each `it` (not `skip=`, see
- * feedback_testbox_style memory + DelayedVerifyTest.cfc:44-48).
+ * BDD style — skip= uses capabilities probed at include-time via DapTestCase.cfm.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -48,12 +47,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				dap.drainEvents();
 			} );
 
-			it( "native: target debugLine is a valid breakpoint location", function() {
-				if ( !supportsBreakpointLocations() ) {
-					systemOutput( "skipping: breakpointLocations not supported", true );
-					return;
-				}
-
+			it( title="native: target debugLine is a valid breakpoint location", body=function() {
 				var locations = dap.breakpointLocations( variables.targetFile, 1, 35 );
 				var validLines = locations.body.breakpoints.map( function( bp ) { return bp.line; } );
 
@@ -63,14 +57,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 					var line = variables.lines[ key ];
 					expect( validLines ).toInclude( line, "#variables.targetFile# line #line# (#key#) should be a valid breakpoint location" );
 				}
-			} );
+			}, skip=notSupportsBreakpointLocations() );
 
-			it( "returns a non-empty completions list for a known prefix", function() {
-				if ( !supportsCompletions() ) {
-					systemOutput( "skipping: completions not supported", true );
-					return;
-				}
-
+			it( title="returns a non-empty completions list for a known prefix", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "completions-target.cfm" );
 
@@ -85,14 +74,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( completionsResponse.body.targets.len() ).toBeGT( 0, "Should return completions" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsCompletions() );
 
-			it( "suggests local variables matching the prefix 'my'", function() {
-				if ( !supportsCompletions() ) {
-					systemOutput( "skipping: completions not supported", true );
-					return;
-				}
-
+			it( title="suggests local variables matching the prefix 'my'", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "completions-target.cfm" );
 
@@ -110,14 +94,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( labels ).toInclude( "myArray" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsCompletions() );
 
-			it( "suggests struct keys after dot-notation prefix 'myStruct.'", function() {
-				if ( !supportsCompletions() ) {
-					systemOutput( "skipping: completions not supported", true );
-					return;
-				}
-
+			it( title="suggests struct keys after dot-notation prefix 'myStruct.'", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "completions-target.cfm" );
 
@@ -134,14 +113,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( labels ).toInclude( "address" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsCompletions() );
 
-			it( "suggests nested struct keys after 'myStruct.address.'", function() {
-				if ( !supportsCompletions() ) {
-					systemOutput( "skipping: completions not supported", true );
-					return;
-				}
-
+			it( title="suggests nested struct keys after 'myStruct.address.'", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "completions-target.cfm" );
 
@@ -157,14 +131,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( labels ).toInclude( "city" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsCompletions() );
 
-			it( "filters completions by partial input 'myStruct.f'", function() {
-				if ( !supportsCompletions() ) {
-					systemOutput( "skipping: completions not supported", true );
-					return;
-				}
-
+			it( title="filters completions by partial input 'myStruct.f'", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "completions-target.cfm" );
 
@@ -180,14 +149,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( labels ).notToInclude( "lastName" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsCompletions() );
 
-			it( "suggests component methods after 'myComponent.'", function() {
-				if ( !supportsCompletions() ) {
-					systemOutput( "skipping: completions not supported", true );
-					return;
-				}
-
+			it( title="suggests component methods after 'myComponent.'", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "completions-target.cfm" );
 
@@ -203,14 +167,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( labels ).toInclude( "greet" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsCompletions() );
 
-			it( "returns completions for empty input (local scope dump)", function() {
-				if ( !supportsCompletions() ) {
-					systemOutput( "skipping: completions not supported", true );
-					return;
-				}
-
+			it( title="returns completions for empty input (local scope dump)", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "completions-target.cfm" );
 
@@ -224,7 +183,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( completionsResponse.body.targets.len() ).toBeGT( 0, "Empty input should return completions" );
 
 				cleanupThread( threadId );
-			} );
+			}, skip=notSupportsCompletions() );
 
 		} );
 	}
