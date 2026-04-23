@@ -1,5 +1,31 @@
 # Changelog
 
+## [3.0.0.5-SNAPSHOT] - 2026-04-23
+
+### Fixed
+
+- **LDEV-6274**: cfinclude frames now surface the included file's basename as the frame name, not the enclosing UDF's file
+- **Native**: HTML dump/dumpAsJSON crash caused by `DEFAULT_RICH` typo in native path
+- **Native**: DAP completions now suggest local + arguments scope variables
+- **Native**: function breakpoint `stopped` event now reports reason `"function breakpoint"`; empty `setFunctionBreakpoints` response body; line-0 UDF frame included on function-entry suspend
+- **Native**: custom DAP requests (e.g. `getApplicationSettings`) now routed to the currently-suspended PageContext; frame cache evicted per-thread on resume
+- **Native**: `exceptionInfo` response now surfaces the CFML exception type
+- **Agent**: background threads marked as daemon so they don't block JVM shutdown
+- Bytecode transform failures now load un-instrumented class instead of killing the JVM
+- `System.exit` call sites replaced with logging + continue — debugger can no longer crash the host JVM
+- BIF calls in native mode use `ClassUtil.loadBIF` with short name, not full class path
+
+### Changed
+
+- Minimum Lucee core version raised to **7.1.0.100** (required for native exception breakpoints)
+- Refactored `NativeLuceeVm` from reflection to loader API throughout
+- Removed `Utils.terminate` / `Utils.unreachable` JVM-killers
+- Removed hot-path debug `println` spam from agent mode
+
+### Added
+
+- **LDEV-6282**: Native-mode uncaught-exception breakpoints — debugger suspends on unhandled exceptions across cfm top-level, component methods, closures, cfthread join (throwOnError), and parallel arrayEach
+
 ## [3.0.0.4] - First Release 2026-03-26
 
 ## [3.0.0.3-SNAPSHOT] - 2026-02-11

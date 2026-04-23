@@ -3,7 +3,7 @@
 [![Maven Central - Extension](https://img.shields.io/maven-central/v/org.lucee/debugger-extension?label=extension)](https://central.sonatype.com/artifact/org.lucee/debugger-extension)
 [![Maven Central - Agent](https://img.shields.io/maven-central/v/org.lucee/debugger-agent?label=agent)](https://central.sonatype.com/artifact/org.lucee/debugger-agent)
 
-A step debugger for Lucee CFML (extension for 7.1+, agent for older versions), based on the [luceedebug](https://github.com/softwareCobbler/luceedebug) project by David Rogers.
+A step debugger for Lucee CFML (extension for 7.1.0.100+, agent for older versions), based on the [luceedebug](https://github.com/softwareCobbler/luceedebug) project by David Rogers.
 
 **[Documentation on docs.lucee.org](https://docs.lucee.org/recipes/step-debugger.html)**
 
@@ -17,14 +17,14 @@ There are two ways to run it, depending on your Lucee version:
 
 | | Lucee Extension | Java Agent |
 |---|---|---|
-| **Lucee version** | 7.1+ | Any |
+| **Lucee version** | 7.1.0.100+ | Any |
 | **Setup** | Install extension, set env vars | JVM startup flags |
 | **JDK required** | No (JRE works) | Yes |
 | **How it hooks in** | Built into Lucee | JDWP + bytecode instrumentation |
 
 See [How It Works (Technical Details)](#how-it-works-technical-details) for more on the differences.
 
-### Lucee Extension (Recommended, Lucee 7.1+)
+### Lucee Extension (Recommended, Lucee 7.1.0.100+)
 
 The simplest and most efficient way to use the debugger. No JVM configuration required, and significantly lower overhead than the agent approach:
 
