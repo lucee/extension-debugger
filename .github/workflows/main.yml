@@ -37,6 +37,12 @@ jobs:
     outputs:
       lucee_branch: ${{ steps.set.outputs.lucee_branch }}
     steps:
+      - name: Debug event inputs
+        run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "ref=${{ github.ref }}"
+          echo "inputs.deploy=${{ inputs.deploy }}"
+          echo "event.inputs.deploy=${{ github.event.inputs.deploy }}"
       - id: set
         run: echo "lucee_branch=" >> "$GITHUB_OUTPUT"
 
