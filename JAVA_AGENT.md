@@ -35,6 +35,7 @@ Configures JDWP, the lower-level Java debugging protocol that the debugger agent
 | `server` | `y` | Use verbatim |
 | `suspend` | `n` | Use verbatim |
 | `address` | `localhost:9999` | Change only if port 9999 is in use |
+| `timeout` | `10000` | Recommended. Prevents JDWP from hanging at JVM shutdown if no debugger was ever connected (e.g. after a Lucee warmup run). |
 
 **Note:** The VS Code debugger connects to the debugger agent, not JDWP directly, so these settings rarely need customising.
 
@@ -99,14 +100,14 @@ For agent mode, you don't need the `secret` field - that's only for native exten
 
 ```bash
 #!/bin/bash
-CATALINA_OPTS="$CATALINA_OPTS -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=localhost:9999"
+CATALINA_OPTS="$CATALINA_OPTS -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=localhost:9999,timeout=10000"
 CATALINA_OPTS="$CATALINA_OPTS -javaagent:/opt/lucee/debugger/debugger-agent.jar=jdwpHost=localhost,jdwpPort=9999,debugHost=0.0.0.0,debugPort=10000,jarPath=/opt/lucee/debugger/debugger-agent.jar"
 ```
 
 ### Windows (setenv.bat)
 
 ```batch
-set CATALINA_OPTS=%CATALINA_OPTS% -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=localhost:9999
+set CATALINA_OPTS=%CATALINA_OPTS% -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=localhost:9999,timeout=10000
 set CATALINA_OPTS=%CATALINA_OPTS% -javaagent:C:\lucee\debugger\debugger-agent.jar=jdwpHost=localhost,jdwpPort=9999,debugHost=0.0.0.0,debugPort=10000,jarPath=C:\lucee\debugger\debugger-agent.jar
 ```
 
@@ -125,3 +126,9 @@ You're running a JRE instead of a JDK. Install a full JDK.
 ### Breakpoints not binding
 
 Use the VS Code command palette and run "luceedebug: show class and breakpoint info" to see what's happening.
+
+### Lucee warmup (`LUCEE_ENABLE_WARMUP`)
+
+The agent automatically detects the `LUCEE_ENABLE_WARMUP` environment variable and skips initialization. No class instrumentation or DAP server setup happens during a warmup run. The real server start that follows will instrument classes normally as they are loaded.
+
+This also avoids JDWP shutdown hangs during warmup — pair with `timeout=10000` in your JDWP args for reliable warmup exits.
