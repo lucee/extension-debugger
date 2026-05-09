@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.0.0.6-SNAPSHOT] - 2026-05-09
+
+### Fixed
+
+- **LDEV-6309**: `StackOverflowError` when inspecting variables containing self-referential structs. `ValTracker.wrapperByObj` now uses identity-keyed weak references instead of `WeakHashMap`, so registering an object no longer triggers `StructImpl.hashCode()`'s value-walk on cyclic graphs.
+
 ## [3.0.0.5-SNAPSHOT] - 2026-04-23
 
 ### Fixed
