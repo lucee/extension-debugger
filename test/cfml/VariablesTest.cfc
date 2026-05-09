@@ -215,6 +215,47 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				cleanupThread( threadId );
 			} );
 
+			it( "inspects a self-referential struct without StackOverflowError (LDEV-6309)", function() {
+				var circularTarget = getArtifactPath( "circular-struct-target.cfm" );
+				var circularDebugLine = 18; // var debugLine = "inspect here";
+
+				dap.setBreakpoints( circularTarget, [ circularDebugLine ] );
+				triggerArtifact( "circular-struct-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+
+				var frame = getTopFrame( threadId );
+				var localScope = getScopeByName( frame.id, "Local" );
+
+				var varsResponse = dap.getVariables( localScope.variablesReference );
+				expect( varsResponse.success ).toBeTrue( "Variables request should not crash on self-referential struct" );
+
+				var varMap = {};
+				for ( var v in varsResponse.body.variables ) {
+					varMap[ v.name ] = v;
+				}
+
+				expect( varMap ).toHaveKey( "circular" );
+				expect( varMap.circular.variablesReference ).toBeGT( 0, "circular should be expandable" );
+
+				var circularChildren = dap.getVariables( varMap.circular.variablesReference );
+				expect( circularChildren.success ).toBeTrue( "Expanding the cycle should not crash" );
+
+				var childMap = {};
+				for ( var v in circularChildren.body.variables ) {
+					childMap[ v.name ] = v;
+				}
+				expect( childMap ).toHaveKey( "self" );
+				expect( childMap.self.variablesReference ).toBe( varMap.circular.variablesReference, "self should reuse the parent's variablesReference" );
+
+				expect( varMap ).toHaveKey( "indirectA" );
+				var indirectAChildren = dap.getVariables( varMap.indirectA.variablesReference );
+				expect( indirectAChildren.success ).toBeTrue( "Expanding indirect cycle (a->b->a) should not crash" );
+
+				cleanupThread( threadId );
+			} );
+
 		} );
 	}
 }
