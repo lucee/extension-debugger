@@ -2,23 +2,24 @@ package org.lucee.extension.debugger.coreinject;
 
 import java.lang.ref.Cleaner;
 import java.lang.ref.WeakReference;
-import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+
+import org.lucee.extension.debugger.util.ConcurrentWeakKeyMap;
 
 public class ValTracker {
     private final Cleaner cleaner;
 
     /**
-     * Really we want a ConcurrentWeakHashMap - we could use Guava mapMaker with weakKeys.
-     * Instead we opt to use a sync'd map, because we expect that the number of threads
-     * touching the map can be more than 1, but will typically be exactly 1 (the DAP session issuing 'show variables' requests)
+     * Identity-keyed weak map: entries are removed when the referent is GC'd, and
+     * lookups use System.identityHashCode rather than the referent's hashCode().
+     * This avoids StackOverflowError when a struct references itself (LDEV-6309) —
+     * StructImpl.hashCode() walks all values and would recurse forever on a cycle.
      */
-    private final Map<Object, WeakTaggedObject> wrapperByObj = Collections.synchronizedMap(new WeakHashMap<>());
+    private final Map<Object, WeakTaggedObject> wrapperByObj = new ConcurrentWeakKeyMap<>();
     private final Map<Long, WeakTaggedObject> wrapperByID = new ConcurrentHashMap<>();
 
     /**
