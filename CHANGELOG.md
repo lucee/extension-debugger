@@ -1,16 +1,27 @@
 # Changelog
 
+## [3.0.0.7-SNAPSHOT] - 2026-05-21
+
+### Fixed
+
+- **[LDEV-6335](https://luceeserver.atlassian.net/browse/LDEV-6335)**: native step-over now advances by source line rather than by ExecutionLog instrumentation block — multi-expression lines (e.g. `<cfset c = a & b>`) no longer require two clicks to advance past
+- **[LDEV-6334](https://luceeserver.atlassian.net/browse/LDEV-6334)**: stale frame IDs after step/continue resolve to the owning request's live `PageContext` via `requestId` matching, so racing VSCode requests no longer return "Frame not found" or blank the Variables panel
+
+### Changed
+
+- Minimum Lucee core version raised to **7.1.0.132**
+
 ## [3.0.0.6-SNAPSHOT] - 2026-05-09
 
 ### Fixed
 
-- **LDEV-6309**: `StackOverflowError` when inspecting variables containing self-referential structs. `ValTracker.wrapperByObj` now uses identity-keyed weak references instead of `WeakHashMap`, so registering an object no longer triggers `StructImpl.hashCode()`'s value-walk on cyclic graphs.
+- **[LDEV-6309](https://luceeserver.atlassian.net/browse/LDEV-6309)**: `StackOverflowError` when inspecting variables containing self-referential structs. `ValTracker.wrapperByObj` now uses identity-keyed weak references instead of `WeakHashMap`, so registering an object no longer triggers `StructImpl.hashCode()`'s value-walk on cyclic graphs.
 
 ## [3.0.0.5-SNAPSHOT] - 2026-04-23
 
 ### Fixed
 
-- **LDEV-6274**: cfinclude frames now surface the included file's basename as the frame name, not the enclosing UDF's file
+- **[LDEV-6274](https://luceeserver.atlassian.net/browse/LDEV-6274)**: cfinclude frames now surface the included file's basename as the frame name, not the enclosing UDF's file
 - **Native**: HTML dump/dumpAsJSON crash caused by `DEFAULT_RICH` typo in native path
 - **Native**: DAP completions now suggest local + arguments scope variables
 - **Native**: function breakpoint `stopped` event now reports reason `"function breakpoint"`; empty `setFunctionBreakpoints` response body; line-0 UDF frame included on function-entry suspend
@@ -30,7 +41,7 @@
 
 ### Added
 
-- **LDEV-6282**: Native-mode uncaught-exception breakpoints — debugger suspends on unhandled exceptions across cfm top-level, component methods, closures, cfthread join (throwOnError), and parallel arrayEach
+- **[LDEV-6282](https://luceeserver.atlassian.net/browse/LDEV-6282)**: Native-mode uncaught-exception breakpoints — debugger suspends on unhandled exceptions across cfm top-level, component methods, closures, cfthread join (throwOnError), and parallel arrayEach
 
 ## [3.0.0.4] - First Release 2026-03-26
 
