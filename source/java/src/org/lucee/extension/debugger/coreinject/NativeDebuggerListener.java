@@ -15,6 +15,7 @@ import java.util.function.Consumer;
 
 import lucee.loader.engine.CFMLEngineFactory;
 import lucee.runtime.PageContext;
+import lucee.runtime.PageContextImpl;
 
 import org.lucee.extension.debugger.Config;
 import org.lucee.extension.debugger.Log;
@@ -157,6 +158,13 @@ public class NativeDebuggerListener {
 	private static volatile Consumer<Long> onNativeExceptionCallback = null;
 
 	/**
+	 * Callback to notify LuceeVm when a CFML request ends (PageContext.release()).
+	 * Called with the PageContext's requestId so listeners can drop per-request state
+	 * (e.g. cached frame metadata) without holding a reference to the PC itself.
+	 */
+	private static volatile Consumer<Integer> onNativeRequestEndCallback = null;
+
+	/**
 	 * Native mode flag - when true, use Lucee's DebuggerRegistry API.
 	 */
 	private static volatile boolean nativeMode = false;
@@ -287,6 +295,15 @@ public class NativeDebuggerListener {
 	 */
 	public static void setOnNativeExceptionCallback(Consumer<Long> callback) {
 		onNativeExceptionCallback = callback;
+	}
+
+	/**
+	 * Set the callback for CFML request-end events.
+	 * Receives the PC's requestId so the LuceeVm can drop per-request state without
+	 * holding a reference to the PC.
+	 */
+	public static void setOnNativeRequestEndCallback(Consumer<Integer> callback) {
+		onNativeRequestEndCallback = callback;
 	}
 
 	/**
@@ -739,6 +756,19 @@ public class NativeDebuggerListener {
 		// Remove from suspended threads map and location
 		nativelySuspendedThreads.remove(threadId);
 		suspendLocations.remove(threadId);
+	}
+
+	/**
+	 * Called by Lucee when a CFML request is about to be released (PageContext.release()).
+	 * Forwards the PC's requestId to LuceeVm so it can drop per-request state.
+	 * Fires before scopes are nulled — safe to read getRequestId() here.
+	 */
+	public static void onRequestEnd(PageContext pc) {
+		Consumer<Integer> callback = onNativeRequestEndCallback;
+		if (callback == null) return;
+		if (pc instanceof PageContextImpl) {
+			callback.accept(((PageContextImpl) pc).getRequestId());
+		}
 	}
 
 	/**

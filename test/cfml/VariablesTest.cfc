@@ -256,6 +256,34 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				cleanupThread( threadId );
 			} );
 
+			// Side panels that lag the stop event can send scopes(oldFrameId) after a step.
+			// Pre-fix that returned empty — Variables panel went blank. Now resolves to the
+			// owning request's current top frame's scopes.
+			it( title="getScopes against a stale frame id (after step + fresh stackTrace) returns populated scopes, not empty", body=function() {
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "variables-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+				var staleFrame = getTopFrame( threadId );
+				var staleFrameId = staleFrame.id;
+
+				dap.stepOver( threadId );
+				dap.waitForEvent( "stopped", 2000 );
+
+				// Refresh the call-stack panel as VSCode would do post-step.
+				// This repopulates frameIdsByThreadId with fresh ids — the stale
+				// id from before the step is now only in evictedFrameRequestId.
+				getTopFrame( threadId );
+
+				var scopesResponse = dap.scopes( staleFrameId );
+				expect( scopesResponse.body.scopes ?: [] ).notToBeEmpty(
+					"Stale frame id should resolve to live top frame's scopes, not return empty panel"
+				);
+
+				cleanupThread( threadId );
+			}, skip=!isNativeMode() );
+
 		} );
 	}
 }

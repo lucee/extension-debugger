@@ -256,6 +256,7 @@ public class ExtensionActivator {
 			final Method onSuspendMethod = nativeListenerClass.getMethod("onSuspend",
 				pageContextClass, String.class, int.class, String.class);
 			final Method onResumeMethod = nativeListenerClass.getMethod("onResume", pageContextClass);
+			final Method onRequestEndMethod = nativeListenerClass.getMethod("onRequestEnd", pageContextClass);
 			final Method shouldSuspendMethod = nativeListenerClass.getMethod("shouldSuspend",
 				pageContextClass, String.class, int.class);
 			final Method isDapClientConnectedMethod = nativeListenerClass.getMethod("isDapClientConnected");
@@ -277,6 +278,7 @@ public class ExtensionActivator {
 							case "isClientConnected": return isDapClientConnectedMethod.invoke(null);
 							case "onSuspend": return onSuspendMethod.invoke(null, args);
 							case "onResume": return onResumeMethod.invoke(null, args);
+							case "onRequestEnd": return onRequestEndMethod.invoke(null, args);
 							case "shouldSuspend": return shouldSuspendMethod.invoke(null, args);
 							case "onException": return onExceptionMethod.invoke(null, args);
 							case "onOutput": return onOutputMethod.invoke(null, args);
