@@ -117,7 +117,8 @@ jobs:
 
       - name: Report built version
         run: |
-          ARTIFACT=$(basename agent/target/debugger-agent-*.jar)
+          ARTIFACT=$(find agent/target -maxdepth 1 -name 'debugger-agent-*.jar' \
+            ! -name '*-sources.jar' ! -name '*-javadoc.jar' -printf '%f\n')
           echo "Built: $ARTIFACT"
           echo "### Agent" >> $GITHUB_STEP_SUMMARY
           echo "\`$ARTIFACT\`" >> $GITHUB_STEP_SUMMARY
