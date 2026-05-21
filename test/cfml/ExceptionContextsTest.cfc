@@ -57,6 +57,37 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				cleanupThread( threadId );
 			}, skip=notSupportsExceptionBreakpoints() );
 
+			// LDEV-6274 regression coverage at the throw site: the INCLUDE frame
+			// pushed by ModernAppListener._doInclude used to land with null
+			// `variables` when no enclosing UDF existed. exception-toplevel-target
+			// sets `topLevelMarker` immediately before the throw — with the fix
+			// it must be inspectable on the suspended frame.
+			it( title="top-level .cfm throw exposes variables scope with page-level assignments", body=function() {
+				dap.setExceptionBreakpoints( [ "uncaught" ] );
+				triggerArtifact( "exception-toplevel-target.cfm", { throwException: true }, true );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				expect( stopped.body.reason ).toBe( "exception" );
+				var threadId = stopped.body.threadId;
+
+				var frame = getTopFrame( threadId );
+				var scopesResponse = dap.scopes( frame.id );
+				var scopeNames = scopesResponse.body.scopes.map( function( s ) { return s.name; } );
+				expect( scopeNames ).toInclude( "variables", "Top-level throw site should expose variables scope. Got: #serializeJSON( scopeNames )#" );
+
+				var varsScope = getScopeByName( frame.id, "variables" );
+				var varsResponse = dap.getVariables( varsScope.variablesReference );
+				var varMap = {};
+				for ( var v in varsResponse.body.variables ) {
+					varMap[ v.name ] = v;
+				}
+
+				expect( varMap ).toHaveKey( "topLevelMarker", "Assignments made before the throw should be visible in variables scope" );
+				expect( varMap.topLevelMarker.value ).toBe( '"top-level-local"' );
+
+				cleanupThread( threadId );
+			}, skip=notSupportsExceptionBreakpoints() || !isNativeMode() );
+
 			it( title="component method throw stops with method + include frames", body=function() {
 				dap.setExceptionBreakpoints( [ "uncaught" ] );
 				triggerArtifact( "exception-component-target.cfm", { throwException: true }, true );
