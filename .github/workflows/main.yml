@@ -76,6 +76,13 @@ jobs:
       - name: Build extension with Maven
         run: mvn -B -e clean install -Dgoal=install
 
+      - name: Report built version
+        run: |
+          ARTIFACT=$(basename target/*.lex)
+          echo "Built: $ARTIFACT"
+          echo "### Extension" >> $GITHUB_STEP_SUMMARY
+          echo "\`$ARTIFACT\`" >> $GITHUB_STEP_SUMMARY
+
       - name: Upload extension
         uses: actions/upload-artifact@v7
         with:
@@ -107,6 +114,13 @@ jobs:
 
       - name: Build agent JAR
         run: cd agent && mvn -B -e clean package
+
+      - name: Report built version
+        run: |
+          ARTIFACT=$(basename agent/target/debugger-agent-*.jar)
+          echo "Built: $ARTIFACT"
+          echo "### Agent" >> $GITHUB_STEP_SUMMARY
+          echo "\`$ARTIFACT\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload agent JAR
         uses: actions/upload-artifact@v7
