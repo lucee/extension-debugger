@@ -185,6 +185,30 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				cleanupThread( threadId );
 			}, skip=notSupportsCompletions() );
 
+			// Watch-input autocomplete can race the stop event with the previous frame id.
+			// Old fallback to getAnySuspendedPageContext() could cross-bleed in multi-thread.
+			it( title="completions against a stale frame id (after step) returns same request's live scope", body=function() {
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "completions-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+				var staleFrame = getTopFrame( threadId );
+				var staleFrameId = staleFrame.id;
+
+				dap.stepOver( threadId );
+				dap.waitForEvent( "stopped", 2000 );
+
+				var completionsResponse = dap.completions( staleFrameId, "my" );
+				var labels = completionsResponse.body.targets.map( function( t ) { return t.label; } );
+
+				expect( labels ).toInclude( "myString",
+					"Stale frame id should resolve to live owning-request scope, not empty/wrong-thread completions"
+				);
+
+				cleanupThread( threadId );
+			}, skip=( notSupportsCompletions() || !isNativeMode() ) );
+
 		} );
 	}
 }

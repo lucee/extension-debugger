@@ -67,6 +67,9 @@ public class NativeLuceeVm implements ILuceeVm {
 	private final ConcurrentHashMap<Long, IDebugFrame> frameCache = new ConcurrentHashMap<>();
 	private final ConcurrentHashMap<Long, long[]> frameIdsByThreadId = new ConcurrentHashMap<>();
 
+	// evicted frame id -> PC.requestId, so stale frame ids race-resolve to the same request's live PC
+	private final ConcurrentHashMap<Long, Integer> evictedFrameRequestId = new ConcurrentHashMap<>();
+
 	/**
 	 * Set the Lucee classloader for reflection access to Lucee core classes.
 	 * Must be called before creating NativeLuceeVm in extension mode.
@@ -107,6 +110,10 @@ public class NativeLuceeVm implements ILuceeVm {
 			if (pauseEventCallback != null) {
 				pauseEventCallback.accept(javaThreadId);
 			}
+		});
+
+		NativeDebuggerListener.setOnNativeRequestEndCallback(reqId -> {
+			evictedFrameRequestId.values().removeIf(reqId::equals);
 		});
 	}
 
@@ -221,20 +228,58 @@ public class NativeLuceeVm implements ILuceeVm {
 		}
 		frameIdsByThreadId.put(threadID, ids);
 
+		sweepEvictedForCompletedRequests();
+
 		Log.trace("getStackTrace: returning " + frames.length + " frames for thread " + threadID);
 		return frames;
 	}
 
 	/**
-	 * Remove this thread's cached frames from frameCache so they can't be
-	 * returned to clients (by frameId lookup or iteration) after the thread
-	 * has resumed.
+	 * Drop a thread's cached frames so clients can't read stale state after resume.
+	 * Snapshots each evicted frame's requestId into evictedFrameRequestId first.
 	 */
 	private void evictFramesForThread(long threadID) {
 		long[] ids = frameIdsByThreadId.remove(threadID);
-		if (ids != null) {
-			for (long id : ids) frameCache.remove(id);
+		if (ids == null) return;
+		for (long id : ids) {
+			IDebugFrame frame = frameCache.remove(id);
+			if (frame instanceof NativeDebugFrame) {
+				PageContext pc = ((NativeDebugFrame) frame).getPageContext();
+				if (pc instanceof PageContextImpl) {
+					evictedFrameRequestId.put(id, ((PageContextImpl) pc).getRequestId());
+				}
+			}
 		}
+	}
+
+	private void sweepEvictedForCompletedRequests() {
+		if (evictedFrameRequestId.isEmpty()) return;
+		Set<Integer> aliveRequestIds = new HashSet<>();
+		for (long tid : NativeDebuggerListener.getSuspendedThreadIds()) {
+			PageContext pc = NativeDebuggerListener.getPageContext(tid);
+			if (pc instanceof PageContextImpl) {
+				aliveRequestIds.add(((PageContextImpl) pc).getRequestId());
+			}
+		}
+		evictedFrameRequestId.values().removeIf(v -> !aliveRequestIds.contains(v));
+	}
+
+	// Resolve a (possibly stale) frame id to its owning request's live PC — handles VSCode racing the stop event.
+	private PageContext resolvePageContextForFrameId(long frameId) {
+		IDebugFrame cached = frameCache.get(frameId);
+		if (cached instanceof NativeDebugFrame) {
+			return ((NativeDebugFrame) cached).getPageContext();
+		}
+		Integer wantedReqId = evictedFrameRequestId.get(frameId);
+		if (wantedReqId == null) return null;
+		for (long tid : NativeDebuggerListener.getSuspendedThreadIds()) {
+			PageContext pc = NativeDebuggerListener.getPageContext(tid);
+			if (pc instanceof PageContextImpl
+				&& ((PageContextImpl) pc).getRequestId() == wantedReqId.intValue()) {
+				return pc;
+			}
+		}
+		return null;
 	}
 
 	private Thread findThreadById(long threadId) {
@@ -250,13 +295,28 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	@Override
 	public IDebugEntity[] getScopes(long frameID) {
-		// Look up frame from cache
 		IDebugFrame frame = frameCache.get(frameID);
-		if (frame == null) {
-			Log.debug("getScopes: frame " + frameID + " not found in cache");
+		if (frame != null) return frame.getScopes();
+
+		// Stale frame id: fall back to owning request's current top frame's scopes.
+		Integer wantedReqId = evictedFrameRequestId.get(frameID);
+		if (wantedReqId == null) {
+			Log.trace("getScopes: frame " + frameID + " not found in cache");
 			return new IDebugEntity[0];
 		}
-		return frame.getScopes();
+		for (long tid : NativeDebuggerListener.getSuspendedThreadIds()) {
+			PageContext pc = NativeDebuggerListener.getPageContext(tid);
+			if (pc instanceof PageContextImpl
+				&& ((PageContextImpl) pc).getRequestId() == wantedReqId.intValue()) {
+				long[] currentIds = frameIdsByThreadId.get(tid);
+				if (currentIds != null && currentIds.length > 0) {
+					IDebugFrame currentTop = frameCache.get(currentIds[0]);
+					if (currentTop != null) return currentTop.getScopes();
+				}
+			}
+		}
+		Log.debug("getScopes: owning request for stale frame " + frameID + " no longer suspended");
+		return new IDebugEntity[0];
 	}
 
 	@Override
@@ -338,6 +398,7 @@ public class NativeLuceeVm implements ILuceeVm {
 	public void continueAll() {
 		frameCache.clear();
 		frameIdsByThreadId.clear();
+		evictedFrameRequestId.clear();
 		NativeDebuggerListener.resumeAllNativeThreads();
 	}
 
@@ -397,22 +458,10 @@ public class NativeLuceeVm implements ILuceeVm {
 			obj = ((CfValueDebuggerBridge.MarkerTrait.Scope) obj).scopelike;
 		}
 
-		// Get PageContext from a cached frame
 		PageContext pc = null;
 		Long frameId = valTracker.getFrameId(dapVariablesReference);
 		if (frameId != null) {
-			IDebugFrame frame = frameCache.get(frameId);
-			if (frame instanceof NativeDebugFrame) {
-				pc = ((NativeDebugFrame) frame).getPageContext();
-			}
-		}
-
-		// Fallback: try any suspended frame's PageContext
-		if (pc == null) {
-			// Fall back to the PC of whichever thread is currently suspended.
-			// Can't scan frameCache: may contain stale frames from a prior
-			// suspension and would hand back the wrong PC.
-			pc = NativeDebuggerListener.getAnySuspendedPageContext();
+			pc = resolvePageContextForFrameId(frameId);
 		}
 
 		if (pc == null) {
@@ -483,22 +532,10 @@ public class NativeLuceeVm implements ILuceeVm {
 			obj = ((CfValueDebuggerBridge.MarkerTrait.Scope) obj).scopelike;
 		}
 
-		// Get the frameId for this variablesReference to get its PageContext
 		Long frameId = valTracker.getFrameId(dapVariablesReference);
 		PageContext pc = null;
 		if (frameId != null) {
-			IDebugFrame frame = frameCache.get(frameId);
-			if (frame instanceof NativeDebugFrame) {
-				pc = ((NativeDebugFrame) frame).getPageContext();
-			}
-		}
-
-		// If no PageContext from frame, try to find any suspended frame's PageContext
-		if (pc == null) {
-			// Fall back to the PC of whichever thread is currently suspended.
-			// Can't scan frameCache: may contain stale frames from a prior
-			// suspension and would hand back the wrong PC.
-			pc = NativeDebuggerListener.getAnySuspendedPageContext();
+			pc = resolvePageContextForFrameId(frameId);
 		}
 
 		if (pc == null) {
@@ -651,17 +688,7 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	@Override
 	public CompletionItem[] getCompletions(int frameId, String partialExpr) {
-		// Get PageContext from frame or any suspended frame
-		PageContext pc = null;
-		IDebugFrame frame = frameCache.get((long) frameId);
-		if (frame instanceof NativeDebugFrame) {
-			pc = ((NativeDebugFrame) frame).getPageContext();
-		}
-		if (pc == null) {
-			// Same rationale as the other fallback sites — use the suspend
-			// map, not frameCache, to avoid stale PCs from earlier suspensions.
-			pc = NativeDebuggerListener.getAnySuspendedPageContext();
-		}
+		PageContext pc = resolvePageContextForFrameId((long) frameId);
 
 		if (pc == null) {
 			return new CompletionItem[0];
@@ -776,13 +803,8 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	@Override
 	public Either<String, Either<ICfValueDebuggerBridge, String>> evaluate(int frameID, String expr) {
-		// For native mode, use the frame's PageContext to evaluate expressions
 		IDebugFrame frame = frameCache.get((long) frameID);
-		if (frame == null) {
-			return Either.Left("Frame not found: " + frameID);
-		}
-
-		if (!(frame instanceof NativeDebugFrame)) {
+		if (frame != null && !(frame instanceof NativeDebugFrame)) {
 			// Fall back to JDWP mode if available
 			if (GlobalIDebugManagerHolder.debugManager != null) {
 				return GlobalIDebugManagerHolder.debugManager.evaluate((Long)(long)frameID, expr);
@@ -790,10 +812,9 @@ public class NativeLuceeVm implements ILuceeVm {
 			return Either.Left("evaluate only supported for native frames");
 		}
 
-		NativeDebugFrame nativeFrame = (NativeDebugFrame) frame;
-		PageContext pc = nativeFrame.getPageContext();
+		PageContext pc = resolvePageContextForFrameId((long) frameID);
 		if (pc == null) {
-			return Either.Left("No PageContext available for frame");
+			return Either.Left("frame is no longer available");
 		}
 
 		try {
@@ -835,24 +856,17 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	@Override
 	public Either<String, Either<ICfValueDebuggerBridge, String>> setVariable(long variablesReference, String name, String value, long frameIdHint) {
-		// Get the frame to access PageContext
-		// First try using the frameId from ValTracker (associated with the variablesReference)
 		Long trackedFrameId = valTracker.getFrameId(variablesReference);
 		long actualFrameId = (trackedFrameId != null) ? trackedFrameId : frameIdHint;
 
 		IDebugFrame frame = frameCache.get(actualFrameId);
-		if (frame == null) {
-			return Either.Left("Frame not found: " + actualFrameId);
-		}
-
-		if (!(frame instanceof NativeDebugFrame)) {
+		if (frame != null && !(frame instanceof NativeDebugFrame)) {
 			return Either.Left("setVariable only supported for native frames");
 		}
 
-		NativeDebugFrame nativeFrame = (NativeDebugFrame) frame;
-		PageContext pc = nativeFrame.getPageContext();
+		PageContext pc = resolvePageContextForFrameId(actualFrameId);
 		if (pc == null) {
-			return Either.Left("No PageContext available for frame");
+			return Either.Left("frame is no longer available");
 		}
 
 		// Get the parent path from ValTracker

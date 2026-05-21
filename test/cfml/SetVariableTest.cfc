@@ -149,6 +149,35 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				cleanupThread( threadId );
 			}, skip=notSupportsSetVariable() );
 
+			// After a step, the variablesReference still maps via valTracker -> frameId,
+			// but that frameId is no longer in frameCache. Resolve to the same request's live PC.
+			it( title="setVariable against a stale variablesReference (after step) does not leak 'Frame not found' to the client", body=function() {
+				dap.setBreakpoints( variables.targetFile, [ lines.checkpoint1 ] );
+				triggerArtifact( "set-variable-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+
+				var frame = getTopFrame( threadId );
+				var localScope = getScopeByName( frame.id, "Local" );
+				var staleVarsRef = localScope.variablesReference;
+
+				dap.stepOver( threadId );
+				dap.waitForEvent( "stopped", 2000 );
+
+				var leaked = "";
+				try {
+					var setResponse = dap.setVariable( staleVarsRef, "modifiable", '"after-step"' );
+					leaked = setResponse.body.value ?: "";
+				} catch ( DapClient.Error e ) {
+					leaked = e.message;
+				}
+				expect( leaked ).notToInclude( "Frame not found",
+					"setVariable against stale variablesReference leaked internal id to client: '#leaked#'" );
+
+				cleanupThread( threadId );
+			}, skip=( notSupportsSetVariable() || !isNativeMode() ) );
+
 		} );
 	}
 }

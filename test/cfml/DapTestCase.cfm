@@ -223,6 +223,64 @@ function waitForHttpComplete( numeric timeout = 5000 ) {
 	return variables.httpResult;
 }
 
+/**
+ * Fire an HTTP request in its own background thread, returning a handle that
+ * waitForBackgroundComplete() can later join. Use this when a test needs MULTIPLE
+ * concurrent requests in flight (e.g. multi-thread cross-bleed assertions).
+ * Doesn't touch variables.httpThread / variables.httpResult, so the single-shot
+ * triggerArtifact() can still be used alongside.
+ */
+function triggerArtifactBackground( required string filename, struct params = {}, boolean allowErrors = false ) {
+	var requestUrl = getArtifactUrl( arguments.filename );
+	var queryString = "";
+
+	for ( var key in arguments.params ) {
+		queryString &= ( len( queryString ) ? "&" : "?" ) & urlEncodedFormat( key ) & "=" & urlEncodedFormat( arguments.params[ key ] );
+	}
+
+	requestUrl &= queryString;
+	var handle = {
+		"threadName": "httpBgTrigger_" & createUUID(),
+		"httpResult": {}
+	};
+
+	thread name="#handle.threadName#" requestUrl=requestUrl httpResult=handle.httpResult allowErrors=arguments.allowErrors {
+		var httpStart = getTickCount();
+		try {
+			systemOutput( "triggerArtifactBackground: #attributes.requestUrl#", true );
+			http url="#attributes.requestUrl#" result="local.r" timeout=5 throwonerror=!attributes.allowErrors;
+
+			httpResult.status = local.r.statusCode;
+			httpResult.content = local.r.fileContent;
+			systemOutput( "triggerArtifactBackground: done #attributes.requestUrl# status=#local.r.statusCode# elapsedMs=#getTickCount() - httpStart#", true );
+		} catch ( any e ) {
+			systemOutput( "triggerArtifactBackground HTTP error: #attributes.requestUrl# msg=#e.message# elapsedMs=#getTickCount() - httpStart#", true );
+			systemOutput( e, true );
+			httpResult.error = e.message;
+		}
+	}
+
+	return handle;
+}
+
+/**
+ * Join a specific background trigger handle. Returns the captured httpResult.
+ */
+function waitForBackgroundComplete( required struct handle, numeric timeout = 5000 ) {
+	var startTime = getTickCount();
+	threadJoin( arguments.handle.threadName, arguments.timeout );
+	var elapsed = getTickCount() - startTime;
+
+	var threadScope = cfthread[ arguments.handle.threadName ];
+	if ( threadScope.status != "COMPLETED" && threadScope.status != "TERMINATED" ) {
+		systemOutput( "waitForBackgroundComplete: TIMEOUT after #elapsed#ms - thread status=#threadScope.status#", true );
+		throw( type="DapTestCase.Timeout", message="HTTP thread '#arguments.handle.threadName#' timed out after #elapsed#ms (status=#threadScope.status#)" );
+	}
+
+	systemOutput( "waitForBackgroundComplete: joined #arguments.handle.threadName# after #elapsed#ms", true );
+	return arguments.handle.httpResult;
+}
+
 function getTopFrame( required numeric threadId ) {
 	var stackResponse = variables.dap.stackTrace( arguments.threadId );
 	systemOutput( "getTopFrame: threadId=#arguments.threadId# response=#serializeJSON( stackResponse )#", true );

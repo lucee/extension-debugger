@@ -223,6 +223,88 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				cleanupThread( threadId );
 			}, skip=notSupportsEvaluate() );
 
+			// Regression for the cross-thread bleed risk in the old getAnySuspendedPageContext()
+			// fallback: two concurrent requests both paused, resolving one thread's stale frame
+			// must not silently grab the other thread's PC.
+			it( title="multi-thread cross-bleed: stale frame id resolves to OWN request, not another concurrent thread's", body=function() {
+				var targetFile = getArtifactPath( "multi-thread-target.cfm" );
+				var multiThreadLines = { breakpoint: 16 };  // myCounter = 1;
+				dap.setBreakpoints( targetFile, [ multiThreadLines.breakpoint ] );
+
+				var handleA = triggerArtifactBackground( "multi-thread-target.cfm", { label: "A-value" } );
+				var handleB = triggerArtifactBackground( "multi-thread-target.cfm", { label: "B-value" } );
+
+				var stopped1 = dap.waitForEvent( "stopped", 5000 );
+				var stopped2 = dap.waitForEvent( "stopped", 5000 );
+
+				var threadId1 = stopped1.body.threadId;
+				var threadId2 = stopped2.body.threadId;
+				expect( threadId1 ).notToBe( threadId2, "Two concurrent requests should produce distinct threadIds" );
+
+				var frame1 = getTopFrame( threadId1 );
+				var frame2 = getTopFrame( threadId2 );
+
+				// Sanity: each thread sees its OWN label, not the other's.
+				var eval1 = dap.evaluate( frame1.id, "myLabel" );
+				var eval2 = dap.evaluate( frame2.id, "myLabel" );
+				expect( eval1.body.result ).notToBe( eval2.body.result,
+					"Sanity: distinct threads should have distinct myLabel; got both='#eval1.body.result#'"
+				);
+				var seenLabels = [ eval1.body.result, eval2.body.result ];
+				expect( seenLabels ).toInclude( '"A-value"' );
+				expect( seenLabels ).toInclude( '"B-value"' );
+
+				// Step thread 1 — its frames go into evictedFrameRequestId.
+				// Thread 2 stays paused on its own frames.
+				dap.stepOver( threadId1 );
+				dap.waitForEvent( "stopped", 2000 );
+
+				// Cross-bleed assertion: evaluating thread 1's STALE frame id
+				// while thread 2 is also suspended must resolve to thread 1's
+				// request invocation, not bleed to thread 2's.
+				var staleEval = dap.evaluate( frame1.id, "myLabel" );
+				expect( staleEval.body.result ).toBe( eval1.body.result,
+					"Stale frame from thread #threadId1# should resolve to its OWN label "
+					& "(#eval1.body.result#), not bleed to thread #threadId2# (#eval2.body.result#); got '#staleEval.body.result#'"
+				);
+
+				// Resume both threads + drain both background requests
+				try { dap.continueThread( threadId1 ); } catch ( any e ) {}
+				try { dap.continueThread( threadId2 ); } catch ( any e ) {}
+				try { waitForBackgroundComplete( handleA, 5000 ); } catch ( any e ) {}
+				try { waitForBackgroundComplete( handleB, 5000 ); } catch ( any e ) {}
+			}, skip=( notSupportsEvaluate() || !isNativeMode() ) );
+
+			// VSCode races stackTrace + evaluate after a stop; evaluate can arrive
+			// with a frame id from the prior suspension, which mustn't leak as an error.
+			it( title="evaluate against a stale frame id does not leak 'Frame not found' to the client", body=function() {
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "evaluate-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+				var staleFrame = getTopFrame( threadId );
+				var staleFrameId = staleFrame.id;
+
+				// Step over: frames for this thread are evicted, the thread
+				// re-suspends at the next instrumentation point, and a fresh
+				// set of frame ids is minted on the next stackTrace fetch.
+				dap.stepOver( threadId );
+				dap.waitForEvent( "stopped", 2000 );
+
+				var leaked = "";
+				try {
+					var resp = dap.evaluate( staleFrameId, "cgi" );
+					leaked = resp.body.result ?: "";
+				} catch ( DapClient.Error e ) {
+					leaked = e.message;
+				}
+				expect( leaked ).notToInclude( "Frame not found",
+					"evaluate against stale frame leaked internal id to client: '#leaked#'" );
+
+				cleanupThread( threadId );
+			}, skip=( notSupportsEvaluate() || !isNativeMode() ) );
+
 		} );
 	}
 }
