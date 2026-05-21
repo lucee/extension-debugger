@@ -404,22 +404,25 @@ public class NativeLuceeVm implements ILuceeVm {
 
 	@Override
 	public void stepIn(long threadID) {
-		int currentDepth = getStackDepthForThread(threadID);
-		NativeDebuggerListener.startStepping(threadID, StepMode.STEP_INTO, currentDepth);
-		continue_(threadID);
+		startStep(threadID, StepMode.STEP_INTO);
 	}
 
 	@Override
 	public void stepOver(long threadID) {
-		int currentDepth = getStackDepthForThread(threadID);
-		NativeDebuggerListener.startStepping(threadID, StepMode.STEP_OVER, currentDepth);
-		continue_(threadID);
+		startStep(threadID, StepMode.STEP_OVER);
 	}
 
 	@Override
 	public void stepOut(long threadID) {
+		startStep(threadID, StepMode.STEP_OUT);
+	}
+
+	private void startStep(long threadID, StepMode mode) {
 		int currentDepth = getStackDepthForThread(threadID);
-		NativeDebuggerListener.startStepping(threadID, StepMode.STEP_OUT, currentDepth);
+		NativeDebuggerListener.SuspendLocation loc = NativeDebuggerListener.getSuspendLocation(threadID);
+		String startFile = loc != null ? loc.file : null;
+		int startLine    = loc != null ? loc.line : 0;
+		NativeDebuggerListener.startStepping(threadID, mode, currentDepth, startFile, startLine);
 		continue_(threadID);
 	}
 
