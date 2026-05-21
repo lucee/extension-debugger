@@ -87,6 +87,46 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 			// ========== Step Over ==========
 
+			it( title="native: stepOver advances one line on multi-expression line", body=function() {
+				// Lucee instruments per statement, so a multi-expression source line
+				// (e.g. `<cfset x = a & b>`) fires shouldSuspend multiple times.
+				// Step-over must guard on (file,line) — not depth alone — or each
+				// click only consumes one sub-expression stop.
+				var multiTarget = getArtifactPath( "stepping-multiexpr-target.cfm" );
+				var bpLine    = 2; // <cfset var2 = "b">           simple line, breakpoint
+				var multiLine = 3; // <cfset var3 = var1 & var2>   multi-expression
+				var nextLine  = 4; // <cfset var4 = var3 & var1>   target of second step
+
+				dap.setBreakpoints( multiTarget, [ bpLine ] );
+				triggerArtifact( "stepping-multiexpr-target.cfm" );
+
+				var stopped  = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+
+				var frame = getTopFrame( threadId );
+				expect( frame.line ).toBe( bpLine, "Should start at L#bpLine#" );
+
+				// Clear the breakpoint so subsequent stops can only come from stepping —
+				// otherwise the breakpoint check (which runs before the step check) would
+				// re-fire on each sub-expression at L#bpLine#.
+				clearBreakpoints( multiTarget );
+
+				// First step lands on the multi-expression line.
+				dap.stepOver( threadId );
+				stopped = dap.waitForEvent( "stopped", 2000 );
+				frame   = getTopFrame( threadId );
+				expect( frame.line ).toBe( multiLine, "First step should land on multi-expression L#multiLine#, got L#frame.line#" );
+
+				// Second step from the multi-expression line must advance to L#nextLine#
+				// in one click — not re-stop on L#multiLine# for the next sub-expression.
+				dap.stepOver( threadId );
+				stopped = dap.waitForEvent( "stopped", 2000 );
+				frame   = getTopFrame( threadId );
+				expect( frame.line ).toBe( nextLine, "Step over from multi-expression L#multiLine# should advance to L#nextLine# in one click, got L#frame.line#" );
+
+				cleanupThread( threadId );
+			}, skip=notNativeMode() );
+
 			it( "stepOver skips function call", function() {
 				// Set breakpoint at call to outerFunc
 				dap.setBreakpoints( variables.targetFile, [ lines.mainCallOuter ] );

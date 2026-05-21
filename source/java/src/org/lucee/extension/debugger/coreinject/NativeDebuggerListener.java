@@ -247,14 +247,23 @@ public class NativeDebuggerListener {
 
 	/**
 	 * Stepping state for a single thread.
+	 *
+	 * startFile/startLine guard STEP_OVER against multi-expression source lines:
+	 * Lucee instruments per statement, so a single source line can fire
+	 * shouldSuspend several times. Without a line check, step-over re-stops
+	 * on the same source line each time.
 	 */
 	private static class StepState {
 		final StepMode mode;
 		final int startDepth;
+		final String startFile;
+		final int startLine;
 
-		StepState(StepMode mode, int startDepth) {
+		StepState(StepMode mode, int startDepth, String startFile, int startLine) {
 			this.mode = mode;
 			this.startDepth = startDepth;
+			this.startFile = startFile;
+			this.startLine = startLine;
 		}
 	}
 
@@ -632,9 +641,11 @@ public class NativeDebuggerListener {
 	 * @param threadId The Java thread ID
 	 * @param mode The step mode (STEP_INTO, STEP_OVER, STEP_OUT)
 	 * @param currentDepth The current stack depth when stepping started
+	 * @param startFile File the thread is currently suspended at (used by STEP_OVER line guard)
+	 * @param startLine Line the thread is currently suspended at (used by STEP_OVER line guard)
 	 */
-	public static void startStepping(long threadId, StepMode mode, int currentDepth) {
-		steppingThreads.put(threadId, new StepState(mode, currentDepth));
+	public static void startStepping(long threadId, StepMode mode, int currentDepth, String startFile, int startLine) {
+		steppingThreads.put(threadId, new StepState(mode, currentDepth, startFile, startLine));
 		updateHasSuspendConditions();
 		Log.debug("Start stepping: thread=" + threadId + " mode=" + mode + " depth=" + currentDepth);
 	}
@@ -956,8 +967,14 @@ public class NativeDebuggerListener {
 				return true;
 
 			case STEP_OVER:
-				// Stop when at same or shallower depth
-				return currentDepth <= stepState.startDepth;
+				// Shallower than start: a frame popped, stop.
+				if (currentDepth < stepState.startDepth) return true;
+				// Deeper than start: we're inside a callee, keep running.
+				if (currentDepth > stepState.startDepth) return false;
+				// Same depth: only stop when we've actually moved to a new source line.
+				// Without this guard a multi-expression line (e.g. `a = b & c`) re-stops
+				// on each sub-expression instrumentation point.
+				return line != stepState.startLine || !file.equals(stepState.startFile);
 
 			case STEP_OUT:
 				// Stop when shallower than start depth
