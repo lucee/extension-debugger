@@ -81,6 +81,10 @@ public class NativeLuceeVm implements ILuceeVm {
 	public NativeLuceeVm(Config config) {
 		this.config_ = config;
 
+		// Let the value bridge resolve frameId → PageContext for getMetaData() lookups
+		// when rendering component variable groups.
+		CfValueDebuggerBridge.registerPageContextResolver(this::resolvePageContextForFrameId);
+
 		// Enable native mode
 		NativeDebuggerListener.setNativeMode(true);
 

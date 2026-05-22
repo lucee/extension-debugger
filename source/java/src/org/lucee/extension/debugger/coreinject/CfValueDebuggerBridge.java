@@ -5,6 +5,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -13,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import org.lucee.extension.debugger.util.ExpiringLruCache;
 
 import lucee.runtime.Component;
+import lucee.runtime.PageContext;
 import lucee.runtime.type.Array;
 import org.lucee.extension.debugger.ICfValueDebuggerBridge;
 import org.lucee.extension.debugger.IDebugEntity;
@@ -60,11 +62,45 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
     public static class MarkerTrait {
         public static class Scope {
             public final Map<?,?> scopelike;
+            // when true, expansion includes UDF entries that the default noisy filter would drop
+            public final boolean showFunctions;
             public Scope(Map<?,?> scopelike) {
+                this(scopelike, false);
+            }
+            public Scope(Map<?,?> scopelike, boolean showFunctions) {
                 this.scopelike = scopelike;
+                this.showFunctions = showFunctions;
+            }
+        }
+        // Holds pre-built debug entries (e.g. function signatures derived from getMetaData).
+        // Expanded directly without going through getAsMaplike — entries carry their own display.
+        public static class PreBuiltGroup {
+            public final IDebugEntity[] entries;
+            public PreBuiltGroup(IDebugEntity[] entries) {
+                this.entries = entries;
             }
         }
     }
+
+    // Resolves a DAP frameId → PageContext. Registered by the mode-specific VM
+    // (NativeLuceeVm / LuceeVm) at startup. Used for getMetaData() lookups.
+    private static volatile java.util.function.Function<Long, PageContext> pcResolver;
+
+    public static void registerPageContextResolver(java.util.function.Function<Long, PageContext> resolver) {
+        pcResolver = resolver;
+    }
+
+    private static PageContext resolvePc(Long frameId) {
+        if (frameId == null) return null;
+        java.util.function.Function<Long, PageContext> r = pcResolver;
+        if (r == null) return null;
+        try {
+            return r.apply(frameId);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
 
     /**
      * @maybeNull_which --> null means "any type"
@@ -100,18 +136,19 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         final boolean namedOK = maybeNull_which == null || maybeNull_which == IDebugEntity.DebugEntityType.NAMED;
         final boolean indexedOK = maybeNull_which == null || maybeNull_which == IDebugEntity.DebugEntityType.INDEXED;
 
+        if (obj instanceof MarkerTrait.PreBuiltGroup && namedOK) {
+            return ((MarkerTrait.PreBuiltGroup) obj).entries;
+        }
         if (obj instanceof MarkerTrait.Scope && namedOK) {
+            MarkerTrait.Scope scope = (MarkerTrait.Scope) obj;
             @SuppressWarnings("unchecked")
-            var m = (Map<String, Object>)(((MarkerTrait.Scope)obj).scopelike);
-            return getAsMaplike(valTracker, m, parentPath, frameId);
+            var m = (Map<String, Object>)(scope.scopelike);
+            return getAsMaplike(valTracker, m, !scope.showFunctions, parentPath, frameId);
         }
         else if (obj instanceof Map && namedOK) {
             if (obj instanceof Component) {
-                return new IDebugEntity[] {
-                    maybeNull_asValue(valTracker, "this", obj, true, true, parentPath, frameId),
-                    maybeNull_asValue(valTracker, "variables", ((Component)obj).getComponentScope(), parentPath, frameId),
-                    maybeNull_asValue(valTracker, "static", ((Component)obj).staticScope(), parentPath, frameId)
-                };
+                List<IDebugEntity> entries = buildComponentGroupEntries(valTracker, (Component) obj, parentPath, frameId);
+                return entries.toArray(new IDebugEntity[0]);
             }
             else {
                 @SuppressWarnings("unchecked")
@@ -163,13 +200,90 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         return false;
     }
 
+    /**
+     * Build the named-variable sub-groups shown when a Component is expanded:
+     * this / variables / static / functions / accessors. Empty groups are omitted.
+     * functions/accessors are sourced from cfc.getMetaData(pc); accessors are
+     * derived from `properties` because auto-generated UDFs aren't in metadata.functions.
+     */
+    private static List<IDebugEntity> buildComponentGroupEntries(ValTracker valTracker, Component cfc, String parentPath, Long frameId) {
+        List<IDebugEntity> entries = new ArrayList<>();
+
+        if (hasNonNoisyEntries((Map<?,?>) cfc)) {
+            entries.add(maybeNull_asValue(valTracker, "this", cfc, true, true, parentPath, frameId));
+        }
+        Object varsScope = cfc.getComponentScope();
+        if (varsScope instanceof Map && hasNonNoisyEntries((Map<?,?>) varsScope)) {
+            entries.add(maybeNull_asValue(valTracker, "variables", varsScope, parentPath, frameId));
+        }
+        Object staticScope = cfc.staticScope();
+        if (staticScope instanceof Map && !((Map<?,?>) staticScope).isEmpty()) {
+            entries.add(maybeNull_asValue(valTracker, "static", staticScope, parentPath, frameId));
+        }
+        PageContext pc = resolvePc(frameId);
+        IDebugEntity[] fnEntries = ComponentSignatures.buildFunctionEntries(cfc, pc);
+        if (fnEntries.length > 0) {
+            entries.add(buildPreBuiltGroupEntry(valTracker, "functions", fnEntries, parentPath, frameId));
+        }
+        IDebugEntity[] accEntries = ComponentSignatures.buildAccessorEntries(cfc, pc);
+        if (accEntries.length > 0) {
+            entries.add(buildPreBuiltGroupEntry(valTracker, "accessors", accEntries, parentPath, frameId));
+        }
+        return entries;
+    }
+
+    private static int countComponentGroups(Component cfc, Long frameId) {
+        int n = 0;
+        if (hasNonNoisyEntries((Map<?,?>) cfc)) n++;
+        Object varsScope = cfc.getComponentScope();
+        if (varsScope instanceof Map && hasNonNoisyEntries((Map<?,?>) varsScope)) n++;
+        Object staticScope = cfc.staticScope();
+        if (staticScope instanceof Map && !((Map<?,?>) staticScope).isEmpty()) n++;
+        PageContext pc = resolvePc(frameId);
+        if (ComponentSignatures.buildFunctionEntries(cfc, pc).length > 0) n++;
+        if (ComponentSignatures.buildAccessorEntries(cfc, pc).length > 0) n++;
+        return n;
+    }
+
+    private static boolean hasNonNoisyEntries(Map<?, ?> map) {
+        for (Map.Entry<?, ?> e : map.entrySet()) {
+            Object v = e.getValue();
+            if (v == null) return true;
+            if (!isNoisyComponentFunction(v)) return true;
+        }
+        return false;
+    }
+
+    private static int countNonNoisy(Map<?, ?> map) {
+        int n = 0;
+        for (Map.Entry<?, ?> e : map.entrySet()) {
+            Object v = e.getValue();
+            if (v == null) { n++; continue; }
+            if (!isNoisyComponentFunction(v)) n++;
+        }
+        return n;
+    }
+
+    private static IDebugEntity buildPreBuiltGroupEntry(ValTracker valTracker, String name, IDebugEntity[] entries, String parentPath, Long frameId) {
+        DebugEntity val = new DebugEntity();
+        val.name = name;
+        val.value = "{} (" + entries.length + " members)";
+        val.namedVariables = entries.length;
+        String childPath = (parentPath != null) ? parentPath + "." + name : null;
+        val.variablesReference = valTracker.registerObjectWithPathAndFrameId(
+            new MarkerTrait.PreBuiltGroup(entries), childPath, frameId
+        ).id;
+        return val;
+    }
+
     private static IDebugEntity[] getAsMaplike(ValTracker valTracker, Map<String, Object> map, String parentPath, Long frameId) {
+        return getAsMaplike(valTracker, map, true, parentPath, frameId);
+    }
+
+    private static IDebugEntity[] getAsMaplike(ValTracker valTracker, Map<String, Object> map, boolean skipNoisyComponentFunctions, String parentPath, Long frameId) {
         ArrayList<IDebugEntity> results = new ArrayList<>();
 
         Set<Map.Entry<String,Object>> entries = map.entrySet();
-
-        // We had been showing member functions on component instances, but it's really just noise. Maybe this could be a configurable option.
-        final var skipNoisyComponentFunctions = true;
 
         for (Map.Entry<String, Object> entry : entries) {
             IDebugEntity val = maybeNull_asValue(valTracker, entry.getKey(), entry.getValue(), skipNoisyComponentFunctions, false, parentPath, frameId);
@@ -313,11 +427,13 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
                     } else {
                         pin(v);
                     }
-                    val.namedVariables = 3; // this / variables / static
+                    // wrap expands flat via the Scope branch — count non-noisy public members
+                    val.namedVariables = countNonNoisy((Map<?,?>) obj);
                     val.variablesReference = valTracker.registerObjectWithPathAndFrameId(v, childPath, frameId).id;
                 }
                 else {
-                    val.namedVariables = ((Map<?,?>)obj).size();
+                    // raw Component expands into sub-groups (this/variables/static/functions/accessors)
+                    val.namedVariables = countComponentGroups((Component) obj, frameId);
                     val.variablesReference = valTracker.registerObjectWithPathAndFrameId(obj, childPath, frameId).id;
                 }
             }
