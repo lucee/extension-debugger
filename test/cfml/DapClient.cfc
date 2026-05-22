@@ -178,10 +178,15 @@ component {
 		} );
 	}
 
-	public struct function getVariables( required numeric variablesReference ) {
-		return sendRequest( "variables", {
+	public struct function getVariables( required numeric variablesReference, numeric start = 0, numeric count = 0 ) {
+		var payload = {
 			"variablesReference": arguments.variablesReference
-		} );
+		};
+		if ( arguments.start > 0 || arguments.count > 0 ) {
+			payload[ "start" ] = arguments.start;
+			payload[ "count" ] = arguments.count;
+		}
+		return sendRequest( "variables", payload );
 	}
 
 	public struct function dump( required numeric variablesReference ) {

@@ -256,6 +256,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         else if (obj instanceof Array) {
             int len = ((Array)obj).size();
             val.value = "Array (" + len + ")";
+            val.indexedVariables = len;
             val.variablesReference = valTracker.registerObjectWithPathAndFrameId(obj, childPath, frameId).id;
         }
         else if (
@@ -312,15 +313,18 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
                     } else {
                         pin(v);
                     }
+                    val.namedVariables = 3; // this / variables / static
                     val.variablesReference = valTracker.registerObjectWithPathAndFrameId(v, childPath, frameId).id;
                 }
                 else {
+                    val.namedVariables = ((Map<?,?>)obj).size();
                     val.variablesReference = valTracker.registerObjectWithPathAndFrameId(obj, childPath, frameId).id;
                 }
             }
             else {
                 int len = ((Map<?,?>)obj).size();
                 val.value = "{} (" + len + " members)";
+                val.namedVariables = len;
                 val.variablesReference = valTracker.registerObjectWithPathAndFrameId(obj, childPath, frameId).id;
             }
         }

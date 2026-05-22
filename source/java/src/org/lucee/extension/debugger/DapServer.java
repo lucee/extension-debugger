@@ -709,7 +709,15 @@ public class DapServer implements IDebugProtocolServer {
             ? luceeVm_.getNamedVariables(args.getVariablesReference())
             : new IDebugEntity[0];
 
-        for (var entity : entities) {
+        // Honour VSCode's pagination request (start + count). count == 0 means "all".
+        int start = args.getStart() != null ? args.getStart() : 0;
+        int count = args.getCount() != null ? args.getCount() : 0;
+        int end = (count > 0) ? Math.min(start + count, entities.length) : entities.length;
+        if (start < 0) start = 0;
+        if (start > entities.length) start = entities.length;
+
+        for (int i = start; i < end; i++) {
+            var entity = entities[i];
             var variable = new Variable();
             variable.setName(entity.getName());
             variable.setVariablesReference((int)entity.getVariablesReference());
