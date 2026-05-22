@@ -306,7 +306,12 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
                 val.value = "cfc<" + ((Component)obj).getName() + ">";
                 if (treatDiscoveredComponentsAsScopes) {
                     var v = new MarkerTrait.Scope((Component)obj);
-                    ((ComponentScopeMarkerTraitShim)obj).__luceedebug__pinComponentScopeMarkerTrait(v);
+                    // agent-mode ComponentImpl has the shim mixed in via bytecode; native mode doesn't
+                    if (obj instanceof ComponentScopeMarkerTraitShim) {
+                        ((ComponentScopeMarkerTraitShim)obj).__luceedebug__pinComponentScopeMarkerTrait(v);
+                    } else {
+                        pin(v);
+                    }
                     val.variablesReference = valTracker.registerObjectWithPathAndFrameId(v, childPath, frameId).id;
                 }
                 else {
