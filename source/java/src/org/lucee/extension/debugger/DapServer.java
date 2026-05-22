@@ -278,12 +278,12 @@ public class DapServer implements IDebugProtocolServer {
         }
         catch (SocketException e) {
             // Expected when shutdown() closes the socket
-            System.out.println("[luceedebug] DAP server SocketException: " + e.getMessage());
-            Log.info("DAP server socket closed");
+            System.out.println("[luceedebug] DAP server SocketException on " + host + ":" + port + ": " + e.getMessage());
+            Log.info("DAP server socket closed on " + host + ":" + port);
             return null;
         }
         catch (Throwable e) {
-            System.out.println("[luceedebug] DAP server error (continuing, accept loop will exit): " + e.getClass().getName() + ": " + e.getMessage());
+            System.out.println("[luceedebug] DAP server error on " + host + ":" + port + " (continuing, accept loop will exit): " + e.getClass().getName() + ": " + e.getMessage());
             e.printStackTrace(System.out);
             e.printStackTrace();
             return null;
@@ -1375,11 +1375,24 @@ public class DapServer implements IDebugProtocolServer {
         }
 
         if (args.getFrameId() == null) {
-            if (!isHover) { Log.debug("evaluate(\"" + expr + "\") - error: missing frameID"); }
-            final var exceptionalResult = new CompletableFuture<EvaluateResponse>();
-            final var error = new ResponseError(ResponseErrorCode.InvalidRequest, "missing frameID", null);
-            exceptionalResult.completeExceptionally(new ResponseErrorException(error));
-            return exceptionalResult;
+            if (isHover) {
+                // hovers fire constantly — keep the tooltip empty rather than littering it
+                final var exceptionalResult = new CompletableFuture<EvaluateResponse>();
+                final var error = new ResponseError(ResponseErrorCode.InvalidRequest, "no frame", null);
+                exceptionalResult.completeExceptionally(new ResponseErrorException(error));
+                return exceptionalResult;
+            }
+            return luceeVm_
+                .evaluateNoFrame(expr)
+                .collapse(
+                    errMsg -> {
+                        Log.debug("evaluateNoFrame(\"" + expr + "\") - " + errMsg);
+                        final var response = new EvaluateResponse();
+                        response.setResult("(" + errMsg + ")");
+                        return CompletableFuture.completedFuture(response);
+                    },
+                    someResult -> renderEvaluateSuccess(expr, someResult)
+                );
         }
         else {
             return luceeVm_
@@ -1392,38 +1405,38 @@ public class DapServer implements IDebugProtocolServer {
                         exceptionalResult.completeExceptionally(new ResponseErrorException(error));
                         return exceptionalResult;
                     },
-                    someResult -> {
-                        return someResult.collapse(
-                            someObj -> {
-                                final IDebugEntity value = someObj.maybeNull_asValue("anonymous value " + anonymousID.incrementAndGet());
-                                final var response = new EvaluateResponse();
-                                if (value == null) {
-                                    // some problem, or we tried to get a function from a cfc maybe? this needs work.
-                                    Log.debug("evaluate(\"" + expr + "\") = ???");
-                                    response.setVariablesReference(0);
-                                    response.setIndexedVariables(0);
-                                    response.setNamedVariables(0);
-                                    response.setResult("???");
-                                }
-                                else {
-                                    Log.debug("evaluate(\"" + expr + "\") = " + value.getValue());
-                                    response.setVariablesReference((int)(long)value.getVariablesReference());
-                                    response.setIndexedVariables(value.getIndexedVariables());
-                                    response.setNamedVariables(value.getNamedVariables());
-                                    // want to see "Struct (4 members)" instead of "anonymous value X"
-                                    response.setResult(value.getValue());
-                                }
-                                return CompletableFuture.completedFuture(response);
-                            },
-                            string -> {
-                                Log.debug("evaluate(\"" + expr + "\") = " + string);
-                                final var response = new EvaluateResponse();
-                                response.setResult(string);
-                                return CompletableFuture.completedFuture(response);
-                            });
-                    }
+                    someResult -> renderEvaluateSuccess(expr, someResult)
                 );
         }
+    }
+
+    private CompletableFuture<EvaluateResponse> renderEvaluateSuccess(String expr, Either<ICfValueDebuggerBridge, String> someResult) {
+        return someResult.collapse(
+            someObj -> {
+                final IDebugEntity value = someObj.maybeNull_asValue("anonymous value " + anonymousID.incrementAndGet());
+                final var response = new EvaluateResponse();
+                if (value == null) {
+                    Log.debug("evaluate(\"" + expr + "\") = ???");
+                    response.setVariablesReference(0);
+                    response.setIndexedVariables(0);
+                    response.setNamedVariables(0);
+                    response.setResult("???");
+                }
+                else {
+                    Log.debug("evaluate(\"" + expr + "\") = " + value.getValue());
+                    response.setVariablesReference((int)(long)value.getVariablesReference());
+                    response.setIndexedVariables(value.getIndexedVariables());
+                    response.setNamedVariables(value.getNamedVariables());
+                    response.setResult(value.getValue());
+                }
+                return CompletableFuture.completedFuture(response);
+            },
+            string -> {
+                Log.debug("evaluate(\"" + expr + "\") = " + string);
+                final var response = new EvaluateResponse();
+                response.setResult(string);
+                return CompletableFuture.completedFuture(response);
+            });
     }
 
     @Override

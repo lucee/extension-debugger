@@ -106,6 +106,15 @@ public interface ILuceeVm {
     public Either<String, Either<ICfValueDebuggerBridge, String>> evaluate(int frameID, String expr);
 
     /**
+     * REPL-style evaluate: user typed in the debug console without a frame selected.
+     * Implementations may evaluate against any suspended/active PageContext.
+     * Default returns a soft error suitable for the debug console.
+     */
+    default Either<String, Either<ICfValueDebuggerBridge, String>> evaluateNoFrame(String expr) {
+        return Either.Left("not paused — set a breakpoint and trigger a request first");
+    }
+
+    /**
      * Set a variable value.
      * @param variablesReference The parent container's variablesReference
      * @param name The variable name within the container

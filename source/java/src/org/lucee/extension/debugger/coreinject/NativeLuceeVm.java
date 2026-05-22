@@ -820,6 +820,21 @@ public class NativeLuceeVm implements ILuceeVm {
 			return Either.Left("frame is no longer available");
 		}
 
+		return doEvaluate(pc, expr);
+	}
+
+	@Override
+	public Either<String, Either<ICfValueDebuggerBridge, String>> evaluateNoFrame(String expr) {
+		// REPL only works when something's paused — the Variables panel's
+		// context is what we evaluate against. No paused frame, no eval.
+		PageContext pc = NativeDebuggerListener.getAnySuspendedPageContext();
+		if (pc == null) {
+			return Either.Left("not paused — hit a breakpoint first");
+		}
+		return doEvaluate(pc, expr);
+	}
+
+	private Either<String, Either<ICfValueDebuggerBridge, String>> doEvaluate(PageContext pc, String expr) {
 		try {
 			// Evaluate implements Function, not BIF — use reflection rather than loadBIF.
 			ClassLoader cl = luceeClassLoader != null ? luceeClassLoader : pc.getClass().getClassLoader();
