@@ -1137,10 +1137,9 @@ public class NativeDebuggerListener {
 
 	/**
 	 * Get any active PageContext from running requests.
-	 * Used when no thread is suspended but we need a PageContext for compilation
-	 * or REPL-style evaluate calls.
+	 * Used when no thread is suspended but we need a PageContext for compilation.
 	 */
-	public static PageContext getAnyActivePageContext() {
+	private static PageContext getAnyActivePageContext() {
 		try {
 			Object engine = CFMLEngineFactory.getInstance();
 			Method getEngineMethod = engine.getClass().getMethod("getEngine");

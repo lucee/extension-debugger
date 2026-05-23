@@ -1,6 +1,15 @@
 /**
- * Expanding a Component in the Variables panel must return its this /
- * variables / static scope entries without blowing up the JSON-RPC channel.
+ * Expanding a Component in the Variables panel renders named sub-groups,
+ * with empty groups omitted in both modes.
+ *
+ * Native mode (Lucee 7.1+): this / variables / static / functions / accessors.
+ * `functions` and `accessors` render full signatures derived from
+ * `cfc.getMetaData(pc)`.
+ *
+ * Agent mode: this / variables / static only. No metadata-derived groups
+ * because the lookup needs a frameId→PageContext resolver that only
+ * NativeLuceeVm registers. Tests that depend on the metadata groups are
+ * gated `skip=!isNativeMode()`.
  *
  * Regression guard: ComponentImpl is only mixed with
  * `ComponentScopeMarkerTraitShim` in agent mode (via bytecode injection).

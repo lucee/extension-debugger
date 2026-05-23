@@ -62,14 +62,8 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
     public static class MarkerTrait {
         public static class Scope {
             public final Map<?,?> scopelike;
-            // when true, expansion includes UDF entries that the default noisy filter would drop
-            public final boolean showFunctions;
             public Scope(Map<?,?> scopelike) {
-                this(scopelike, false);
-            }
-            public Scope(Map<?,?> scopelike, boolean showFunctions) {
                 this.scopelike = scopelike;
-                this.showFunctions = showFunctions;
             }
         }
         // Holds pre-built debug entries (e.g. function signatures derived from getMetaData).
@@ -143,7 +137,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
             MarkerTrait.Scope scope = (MarkerTrait.Scope) obj;
             @SuppressWarnings("unchecked")
             var m = (Map<String, Object>)(scope.scopelike);
-            return getAsMaplike(valTracker, m, !scope.showFunctions, parentPath, frameId);
+            return getAsMaplike(valTracker, m, parentPath, frameId);
         }
         else if (obj instanceof Map && namedOK) {
             if (obj instanceof Component) {

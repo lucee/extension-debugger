@@ -3,9 +3,11 @@
  *
  * VSCode requests slices of large containers via `start` + `count` on the
  * `variables` request, after seeing high `namedVariables` / `indexedVariables`
- * counts on the parent. The server must honour those bounds and return only
- * the requested slice — otherwise expansion dumps the full container every
- * time the user expands the parent, which is wasteful and unscrollable.
+ * counts on the parent. The server materialises the full container internally
+ * then slices at the DAP layer — pagination caps the wire-level payload, not
+ * the build cost. Build-level slicing (pushing start/count down into the
+ * value bridge) would be a future win; current "slice-after-materialise"
+ * is fine up to ~10k members.
  */
 component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
@@ -65,9 +67,6 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				cleanupThread( threadId );
 			}, skip=!isNativeMode() );
 
-			// Red phase: server currently ignores start/count and returns the full
-			// 500-key collection regardless of requested slice. With pagination
-			// honoured, this should return exactly `count` entries.
 			it( title="variables(start=0, count=100) returns first 100 keys only", body=function() {
 				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
 				triggerArtifact( "wide-struct-target.cfm" );
