@@ -139,6 +139,56 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				expect( dap.threads() ).toHaveKey( "body" );
 			}, skip=notNativeMode() );
 
+			// Multi-thread cross-bleed: getApplicationSettings has no threadId in its
+			// payload, so it relies on the active-thread tracker to pick a PC. Flaky
+			// against the old getAnySuspendedPageContext() until that lands.
+			it( title="multi-thread: getApplicationSettings resolves to last-interacted thread's app context, not a random suspended PC", body=function() {
+				var multiTargetFile = getArtifactPath( "appSettings-multi/index.cfm" );
+				var multiLines = { breakpoint: 11 };  // debugLine = "inspect here";
+				dap.setBreakpoints( multiTargetFile, [ multiLines.breakpoint ] );
+
+				var handleA = triggerArtifactBackground( "appSettings-multi/index.cfm", { appname: "app-thread-a" } );
+				var handleB = triggerArtifactBackground( "appSettings-multi/index.cfm", { appname: "app-thread-b" } );
+
+				var stopped1 = dap.waitForEvent( "stopped", 5000 );
+				var stopped2 = dap.waitForEvent( "stopped", 5000 );
+
+				var threadId1 = stopped1.body.threadId;
+				var threadId2 = stopped2.body.threadId;
+				expect( threadId1 ).notToBe( threadId2, "Two concurrent requests should produce distinct threadIds" );
+
+				// Resolve which threadId owns which app context via frame-scoped eval —
+				// the frame.id path is already deterministic.
+				var frame1 = getTopFrame( threadId1 );
+				var frame2 = getTopFrame( threadId2 );
+				var name1 = dap.evaluate( frame1.id, "appName" ).body.result;
+				var name2 = dap.evaluate( frame2.id, "appName" ).body.result;
+				expect( name1 ).notToBe( name2, "Sanity: distinct app contexts should produce distinct appName" );
+
+				// Interact with thread A first — getApplicationSettings must return A's app name.
+				dap.stackTrace( threadId1 );
+				var settingsAfterA = deserializeJSON( dap.getApplicationSettings().body.content );
+				expect( '"' & settingsAfterA.name & '"' ).toBe( name1,
+					"after interacting with thread #threadId1#, getApplicationSettings should "
+					& "return its app name (#name1#), not bleed to thread #threadId2# (#name2#); "
+					& "got '#settingsAfterA.name#'"
+				);
+
+				// Reverse — same guarantee for B.
+				dap.stackTrace( threadId2 );
+				var settingsAfterB = deserializeJSON( dap.getApplicationSettings().body.content );
+				expect( '"' & settingsAfterB.name & '"' ).toBe( name2,
+					"after interacting with thread #threadId2#, getApplicationSettings should "
+					& "return its app name (#name2#), not bleed to thread #threadId1# (#name1#); "
+					& "got '#settingsAfterB.name#'"
+				);
+
+				try { dap.continueThread( threadId1 ); } catch ( any e ) {}
+				try { dap.continueThread( threadId2 ); } catch ( any e ) {}
+				try { waitForBackgroundComplete( handleA, 5000 ); } catch ( any e ) {}
+				try { waitForBackgroundComplete( handleB, 5000 ); } catch ( any e ) {}
+			}, skip=notNativeMode() );
+
 		} );
 	}
 }

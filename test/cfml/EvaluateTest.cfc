@@ -351,6 +351,55 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 					"no-frame eval with nothing suspended should surface the 'not paused' soft error. Got: #serializeJSON( evalResponse.body )#" );
 			}, skip=( notSupportsEvaluate() || !isNativeMode() ) );
 
+			// Multi-thread no-frame evaluate must resolve to the LAST-INTERACTED thread,
+			// not whichever PC the suspended-threads map enumerates first. Flaky against
+			// the old getAnySuspendedPageContext() until the active-thread tracker lands.
+			it( title="multi-thread no-frame eval resolves to last-interacted thread, not a random suspended PC", body=function() {
+				var targetFile = getArtifactPath( "multi-thread-target.cfm" );
+				var multiThreadLines = { breakpoint: 16 };  // myCounter = 1;
+				dap.setBreakpoints( targetFile, [ multiThreadLines.breakpoint ] );
+
+				var handleA = triggerArtifactBackground( "multi-thread-target.cfm", { label: "A-value" } );
+				var handleB = triggerArtifactBackground( "multi-thread-target.cfm", { label: "B-value" } );
+
+				var stopped1 = dap.waitForEvent( "stopped", 5000 );
+				var stopped2 = dap.waitForEvent( "stopped", 5000 );
+
+				var threadId1 = stopped1.body.threadId;
+				var threadId2 = stopped2.body.threadId;
+				expect( threadId1 ).notToBe( threadId2, "Two concurrent requests should produce distinct threadIds" );
+
+				// Resolve which threadId corresponds to which label via frame-scoped eval
+				// (the frame.id path is already deterministic — that's our oracle).
+				var frame1 = getTopFrame( threadId1 );
+				var frame2 = getTopFrame( threadId2 );
+				var label1 = dap.evaluate( frame1.id, "myLabel" ).body.result;
+				var label2 = dap.evaluate( frame2.id, "myLabel" ).body.result;
+				expect( label1 ).notToBe( label2, "Sanity: distinct threads should have distinct myLabel" );
+
+				// "Interact with A first" → stackTrace on A registers it as last-interacted.
+				// No-frame eval must now resolve to A's PC, returning A's label.
+				dap.stackTrace( threadId1 );
+				var noFrameAfterA = dap.evaluate( expression="myLabel" );
+				expect( noFrameAfterA.body.result ).toBe( label1,
+					"no-frame eval after interacting with thread #threadId1# should return its label (#label1#), "
+					& "not bleed to thread #threadId2# (#label2#); got '#noFrameAfterA.body.result#'"
+				);
+
+				// Reverse the interaction order — same guarantee for B.
+				dap.stackTrace( threadId2 );
+				var noFrameAfterB = dap.evaluate( expression="myLabel" );
+				expect( noFrameAfterB.body.result ).toBe( label2,
+					"no-frame eval after interacting with thread #threadId2# should return its label (#label2#), "
+					& "not bleed to thread #threadId1# (#label1#); got '#noFrameAfterB.body.result#'"
+				);
+
+				try { dap.continueThread( threadId1 ); } catch ( any e ) {}
+				try { dap.continueThread( threadId2 ); } catch ( any e ) {}
+				try { waitForBackgroundComplete( handleA, 5000 ); } catch ( any e ) {}
+				try { waitForBackgroundComplete( handleB, 5000 ); } catch ( any e ) {}
+			}, skip=( notSupportsEvaluate() || !isNativeMode() ) );
+
 		} );
 	}
 }
