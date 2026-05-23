@@ -239,19 +239,6 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         return entries;
     }
 
-    private static int countComponentGroups(Component cfc, Long frameId) {
-        int n = 0;
-        if (hasNonNoisyEntries((Map<?,?>) cfc)) n++;
-        Object varsScope = cfc.getComponentScope();
-        if (varsScope instanceof Map && hasNonNoisyEntries((Map<?,?>) varsScope)) n++;
-        Object staticScope = cfc.staticScope();
-        if (staticScope instanceof Map && !((Map<?,?>) staticScope).isEmpty()) n++;
-        PageContext pc = resolvePc(frameId);
-        if (ComponentSignatures.buildFunctionEntries(cfc, pc).length > 0) n++;
-        if (ComponentSignatures.buildAccessorEntries(cfc, pc).length > 0) n++;
-        return n;
-    }
-
     private static boolean hasNonNoisyEntries(Map<?, ?> map) {
         for (Map.Entry<?, ?> e : map.entrySet()) {
             Object v = e.getValue();
@@ -466,8 +453,8 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
                     val.variablesReference = valTracker.registerObjectWithPathAndFrameId(v, childPath, frameId).id;
                 }
                 else {
-                    // raw Component expands into sub-groups (this/variables/static/functions/accessors)
-                    val.namedVariables = countComponentGroups((Component) obj, frameId);
+                    // 5 = upper bound (this/variables/static/functions/accessors); real groups materialise on expand
+                    val.namedVariables = 5;
                     val.variablesReference = valTracker.registerObjectWithPathAndFrameId(obj, childPath, frameId).id;
                 }
             }

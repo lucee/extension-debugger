@@ -295,6 +295,23 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				cleanupThread( threadId );
 			}, skip=!isNativeMode() );
 
+			it( title="Component child reports namedVariables upper bound without paying metadata cost", body=function() {
+				dap.setBreakpoints( variables.richTargetFile, [ lines.debugLine ] );
+				triggerArtifact( "rich-component-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+
+				var frame = getTopFrame( threadId );
+				var richComponent = getVariableByName( getScopeByName( frame.id, "Local" ).variablesReference, "richComponent" );
+
+				// lazy-count: parent declares 5 (upper bound — this/variables/static/functions/accessors)
+				// without doing the per-CFC getMetaData call upfront. Real sub-groups materialise on expand.
+				expect( richComponent.namedVariables ).toBe( 5, "Component child should declare namedVariables=5 as upper bound. Got: #richComponent.namedVariables#" );
+
+				cleanupThread( threadId );
+			}, skip=!isNativeMode() );
+
 			it( title="function signature renders required vs optional args distinctly", body=function() {
 				dap.setBreakpoints( variables.richTargetFile, [ lines.debugLine ] );
 				triggerArtifact( "rich-component-target.cfm" );
