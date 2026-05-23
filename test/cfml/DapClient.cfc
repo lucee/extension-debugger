@@ -263,12 +263,16 @@ component {
 		return response;
 	}
 
-	public struct function evaluate( required numeric frameId, required string expression, string context = "watch" ) {
-		return sendRequest( "evaluate", {
-			"frameId": arguments.frameId,
+	public struct function evaluate( numeric frameId = 0, required string expression, string context = "watch" ) {
+		// frameId = 0 means "omit the frameId field entirely" — server routes to evaluateNoFrame
+		var payload = {
 			"expression": arguments.expression,
 			"context": arguments.context
-		} );
+		};
+		if ( arguments.frameId > 0 ) {
+			payload[ "frameId" ] = arguments.frameId;
+		}
+		return sendRequest( "evaluate", payload );
 	}
 
 	public struct function completions( required numeric frameId, required string text, numeric column = 0 ) {

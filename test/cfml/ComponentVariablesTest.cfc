@@ -1,15 +1,16 @@
 /**
- * Expanding a Component in the Variables panel renders named sub-groups,
- * with empty groups omitted in both modes.
+ * Component expansion in the Variables panel.
  *
- * Native mode (Lucee 7.1+): this / variables / static / functions / accessors.
- * `functions` and `accessors` render full signatures derived from
+ * Native mode (Lucee 7.1+): sub-group rendering — this / variables /
+ * static / functions / accessors. Empty groups omitted. `functions`
+ * and `accessors` render full signatures derived from
  * `cfc.getMetaData(pc)`.
  *
- * Agent mode: this / variables / static only. No metadata-derived groups
- * because the lookup needs a frameId→PageContext resolver that only
- * NativeLuceeVm registers. Tests that depend on the metadata groups are
- * gated `skip=!isNativeMode()`.
+ * Agent mode: bypasses sub-group rendering (no PageContext plumbed
+ * through to the bridge). Falls through to a flat list of data keys
+ * with noisy UDFs (UDFImpl/UDFGetterProperty/UDFSetterProperty)
+ * filtered out. Mode-specific specs are gated `skip=!isNativeMode()`;
+ * the leading smoke test runs in both modes.
  *
  * Regression guard: ComponentImpl is only mixed with
  * `ComponentScopeMarkerTraitShim` in agent mode (via bytecode injection).
@@ -60,6 +61,24 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				}
 
 				dap.drainEvents();
+			} );
+
+			it( title="any mode: expanding a Component returns a non-empty result without error", body=function() {
+				// RichComponent sets this.publicData in init() — survives UDF filtering in agent mode
+				dap.setBreakpoints( variables.richTargetFile, [ lines.debugLine ] );
+				triggerArtifact( "rich-component-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+
+				var frame = getTopFrame( threadId );
+				var richComponent = getVariableByName( getScopeByName( frame.id, "Local" ).variablesReference, "richComponent" );
+
+				var response = dap.getVariables( richComponent.variablesReference );
+				expect( response.success ).toBeTrue( "Component expansion must not error in any mode" );
+				expect( response.body.variables.len() ).toBeGT( 0, "Component expansion must return at least one entry. Got: #serializeJSON( response.body.variables )#" );
+
+				cleanupThread( threadId );
 			} );
 
 			it( title="expanding a Component exposes the expected groups and omits empty ones (this/static here)", body=function() {

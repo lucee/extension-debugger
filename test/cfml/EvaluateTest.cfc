@@ -305,6 +305,52 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				cleanupThread( threadId );
 			}, skip=( notSupportsEvaluate() || !isNativeMode() ) );
 
+			// Debug-console eval with no frame selected — server-side `evaluateNoFrame` path.
+			// Single-thread cases land here; multi-thread cross-bleed lives in the per-frame
+			// pinning work since `getAnySuspendedPageContext` non-determinism makes the
+			// multi-thread variant flaky until the active-thread tracker lands.
+			it( title="no frame: returns result against the suspended PC", body=function() {
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "evaluate-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+
+				// no frameId — server falls back to evaluateNoFrame against any suspended PC
+				var evalResponse = dap.evaluate( expression="1 + 1" );
+				expect( evalResponse.body.result ).toBe( "2",
+					"no-frame eval against a suspended PC should return result. Got: #serializeJSON( evalResponse.body )#" );
+
+				cleanupThread( threadId );
+			}, skip=( notSupportsEvaluate() || !isNativeMode() ) );
+
+			it( title="no frame + hover context: returns error, not a result", body=function() {
+				dap.setBreakpoints( variables.targetFile, [ lines.debugLine ] );
+				triggerArtifact( "evaluate-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+
+				// hover requests fire constantly; the server short-circuits with an error
+				// when there's no frame rather than evaluating against an unrelated PC
+				var caught = false;
+				try {
+					dap.evaluate( expression="1 + 1", context="hover" );
+				} catch ( DapClient.Error e ) {
+					caught = true;
+				}
+				expect( caught ).toBeTrue( "hover with no frame must produce an error response" );
+
+				cleanupThread( threadId );
+			}, skip=( notSupportsEvaluate() || !isNativeMode() ) );
+
+			it( title="no frame + nothing paused: returns 'not paused' soft error", body=function() {
+				// no breakpoint, no trigger — nothing is suspended
+				var evalResponse = dap.evaluate( expression="1 + 1" );
+				expect( evalResponse.body.result ).toInclude( "not paused",
+					"no-frame eval with nothing suspended should surface the 'not paused' soft error. Got: #serializeJSON( evalResponse.body )#" );
+			}, skip=( notSupportsEvaluate() || !isNativeMode() ) );
+
 		} );
 	}
 }

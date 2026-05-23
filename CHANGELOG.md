@@ -4,13 +4,13 @@
 
 ### Fixed
 
-- **[LDEV-6339](https://luceeserver.atlassian.net/browse/LDEV-6339)**: native-mode debugger polish:
+- **[LDEV-6339](https://luceeserver.atlassian.net/browse/LDEV-6339)**: native-mode debugger polish (all sub-items are native-only unless noted):
   - Variables panel no longer ClassCastExceptions when expanding a Component — only agent-mode `ComponentImpl` has `ComponentScopeMarkerTraitShim` mixed in via bytecode; the native cast is now gated by `instanceof`
-  - Variables panel honours VSCode's `start`/`count` pagination request and reports `indexedVariables`/`namedVariables` so large arrays and structs are chunked instead of streamed in one shot
-  - Debug console accepts expressions without a selected frame — evaluates against any suspended `PageContext` instead of returning "missing frameID"
-  - Expanding a Component now splits into `this` / `variables` / `static` / `functions` / `accessors` sub-groups (empty groups omitted); the `functions` and `accessors` groups render full signatures derived from `getMetaData(cfc)` (auto-generated accessors derived from the property declaration)
+  - Variables panel honours VSCode's `start`/`count` pagination request and reports `indexedVariables`/`namedVariables` so large arrays and structs are chunked instead of streamed in one shot (both modes)
+  - Debug console accepts expressions without a selected frame — evaluates against any suspended `PageContext` instead of returning "missing frameID" (native only; agent's no-frame eval returns the "not paused" default)
+  - Expanding a Component now splits into `this` / `variables` / `static` / `functions` / `accessors` sub-groups (empty groups omitted); the `functions` and `accessors` groups render full signatures derived from `getMetaData(cfc)` (auto-generated accessors derived from the property declaration). Agent mode expands to a flat list with noisy UDFs filtered.
   - Variables panel exposes additional scopes: `cookie`, `cfthread`, `applicationContext`, `systemMetrics`
-- **[LDEV-6337](https://luceeserver.atlassian.net/browse/LDEV-6337)**: Variables panel now shows the right `variables` scope on top-level CFM pages (was missing entirely) and inside custom-tag bodies (was leaking the caller's scope). Core fix on the INCLUDE debugger frame; covered by new specs for top-level CFM, cfmodule, and top-level exception-suspend.
+- **[LDEV-6337](https://luceeserver.atlassian.net/browse/LDEV-6337)** (native only — Lucee 7.1+): Variables panel now shows the right `variables` scope on top-level CFM pages (was missing entirely) and inside custom-tag bodies (was leaking the caller's scope). Core fix on the INCLUDE debugger frame; existing specs for top-level CFM, cfmodule, and top-level exception-suspend now pass once the minimum core picks up the fix.
 
 ### Changed
 

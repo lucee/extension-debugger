@@ -228,6 +228,7 @@ public class NativeDebugFrame implements IDebugFrame {
 				Map<String, Object> asMap = ( result instanceof Map ) ? (Map<String, Object>) result : null;
 				return asMap;
 			} catch ( Throwable t ) {
+				Log.debug( "LazyMap[" + name + "] supplier (" + bifName + ") failed: " + t.getMessage() );
 				return null;
 			}
 		} );
@@ -544,7 +545,7 @@ public class NativeDebugFrame implements IDebugFrame {
 			return result.toArray( new IDebugFrame[0] );
 
 		} catch ( Throwable e ) {
-			System.err.println( "[luceedebug] Error getting native frames: " + e.getMessage() );
+			Log.error( "Error getting native frames", e );
 			return null;
 		}
 	}

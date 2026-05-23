@@ -143,7 +143,8 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
             return getAsMaplike(valTracker, m, true, scope.ignoreKeys, parentPath, frameId);
         }
         else if (obj instanceof Map && namedOK) {
-            if (obj instanceof Component) {
+            if (obj instanceof Component && pc != null) {
+                // sub-group rendering needs pc for getMetaData; agent has no pc plumbed in and falls through to flat expansion
                 List<IDebugEntity> entries = buildComponentGroupEntries(valTracker, (Component) obj, parentPath, frameId, pc);
                 return entries.toArray(new IDebugEntity[0]);
             }
@@ -200,8 +201,8 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
     /**
      * Build the named-variable sub-groups shown when a Component is expanded:
      * this / variables / static / functions / accessors. Empty groups omitted.
-     * functions/accessors are sourced from cfc.getMetaData(pc); when pc is null
-     * (agent mode, or any caller without a frame) those two groups stay empty.
+     * functions/accessors are sourced from cfc.getMetaData(pc); caller gates
+     * on pc != null so agent-mode (no pc) never reaches here.
      */
     private static List<IDebugEntity> buildComponentGroupEntries(ValTracker valTracker, Component cfc, String parentPath, Long frameId, PageContext pc) {
         List<IDebugEntity> entries = new ArrayList<>();
@@ -448,7 +449,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
                     val.variablesReference = valTracker.registerObjectWithPathAndFrameId(v, childPath, frameId).id;
                 }
                 else {
-                    // 5 = upper bound (this/variables/static/functions/accessors); real groups materialise on expand
+                    // native upper bound (5 sub-groups); agent expands flat so the count is approximate there — native takes priority
                     val.namedVariables = 5;
                     val.variablesReference = valTracker.registerObjectWithPathAndFrameId(obj, childPath, frameId).id;
                 }
