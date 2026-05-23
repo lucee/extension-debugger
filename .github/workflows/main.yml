@@ -26,6 +26,25 @@ env:
   DEBUGGEE_HTTP_PORT: 8888
 
 jobs:
+  # Fail fast if root pom.xml <version> and agent/pom.xml <revision> have drifted.
+  # AGENTS.md release steps require both to move together; this catches forgotten bumps.
+  check-pom-versions:
+    name: Check pom version sync
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Compare root and agent versions
+        run: |
+          ROOT=$(grep -oP '(?<=<version>)[^<]+' pom.xml | head -1)
+          AGENT=$(grep -oP '(?<=<revision>)[^<]+' agent/pom.xml | head -1)
+          echo "root pom.xml <version>:    $ROOT"
+          echo "agent/pom.xml <revision>:  $AGENT"
+          if [ "$ROOT" != "$AGENT" ]; then
+            echo "::error::pom version drift: root pom.xml=$ROOT, agent/pom.xml=$AGENT — both must match (see AGENTS.md release steps)"
+            exit 1
+          fi
+
   # Prime Maven cache by running script-runner once
   # This ensures the cache is populated for subsequent jobs
   prime-maven-cache:
@@ -55,6 +74,7 @@ jobs:
   build-extension:
     name: Build extension-debugger
     runs-on: ubuntu-latest
+    needs: [check-pom-versions]
 
     steps:
       - name: Checkout
@@ -94,6 +114,7 @@ jobs:
   build-agent:
     name: Build agent JAR
     runs-on: ubuntu-latest
+    needs: [check-pom-versions]
 
     steps:
       - name: Checkout
