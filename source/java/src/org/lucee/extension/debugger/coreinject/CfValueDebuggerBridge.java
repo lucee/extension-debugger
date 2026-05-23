@@ -81,6 +81,16 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
                 this.entries = entries;
             }
         }
+        // Defers Map production until first expand. Supplier is invoked at most
+        // once per expand; failures yield an empty group. Used for expensive
+        // scopes like getApplicationSettings() where eager build would run on
+        // every stop even when the user never opens the scope.
+        public static class LazyMap {
+            public final java.util.function.Supplier<Map<String, Object>> supplier;
+            public LazyMap(java.util.function.Supplier<Map<String, Object>> supplier) {
+                this.supplier = supplier;
+            }
+        }
     }
 
     /**
@@ -120,6 +130,11 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
 
         if (obj instanceof MarkerTrait.PreBuiltGroup && namedOK) {
             return ((MarkerTrait.PreBuiltGroup) obj).entries;
+        }
+        if (obj instanceof MarkerTrait.LazyMap && namedOK) {
+            Map<String, Object> m = ((MarkerTrait.LazyMap) obj).supplier.get();
+            if (m == null) return new IDebugEntity[0];
+            return getAsMaplike(valTracker, m, parentPath, frameId);
         }
         if (obj instanceof MarkerTrait.Scope && namedOK) {
             MarkerTrait.Scope scope = (MarkerTrait.Scope) obj;

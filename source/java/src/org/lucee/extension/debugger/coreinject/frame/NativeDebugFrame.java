@@ -1,7 +1,11 @@
 package org.lucee.extension.debugger.coreinject.frame;
 
+import lucee.loader.engine.CFMLEngine;
+import lucee.loader.engine.CFMLEngineFactory;
 import lucee.runtime.PageContext;
 import lucee.runtime.exp.PageException;
+import lucee.runtime.ext.function.BIF;
+import lucee.runtime.type.KeyImpl;
 
 import java.io.File;
 import java.io.PrintWriter;
@@ -214,6 +218,26 @@ public class NativeDebugFrame implements IDebugFrame {
 		return pageContext;
 	}
 
+	private void registerLazyBifScope( String name, PageContext pcForLazy, String bifName ) {
+		Object lazy = new MarkerTrait.LazyMap( () -> {
+			try {
+				CFMLEngine engine = CFMLEngineFactory.getInstance();
+				BIF bif = engine.getClassUtil().loadBIF( pcForLazy, bifName );
+				Object result = bif.invoke( pcForLazy, new Object[] {} );
+				@SuppressWarnings( "unchecked" )
+				Map<String, Object> asMap = ( result instanceof Map ) ? (Map<String, Object>) result : null;
+				return asMap;
+			} catch ( Throwable t ) {
+				return null;
+			}
+		} );
+		CfValueDebuggerBridge.pin( lazy );
+		var bridge = new CfValueDebuggerBridge( valTracker, lazy );
+		valTracker.setPath( bridge.id, name );
+		valTracker.setFrameId( bridge.id, id );
+		scopes_.put( name, bridge );
+	}
+
 	private void checkedPutScopeRef( String name, Object scope ) {
 		if ( scope != null && scope instanceof Map ) {
 			var v = new MarkerTrait.Scope( (Map<?, ?>) scope );
@@ -254,6 +278,10 @@ public class NativeDebugFrame implements IDebugFrame {
 		} catch ( Throwable e ) { /* scope not available */ }
 
 		try {
+			checkedPutScopeRef( "cookie", pageContext.cookieScope() );
+		} catch ( Throwable e ) { /* scope not available */ }
+
+		try {
 			checkedPutScopeRef( "request", pageContext.requestScope() );
 		} catch ( Throwable e ) { /* scope not available */ }
 
@@ -270,6 +298,28 @@ public class NativeDebugFrame implements IDebugFrame {
 		try {
 			checkedPutScopeRef( "url", pageContext.urlScope() );
 		} catch ( Throwable e ) { /* scope not available */ }
+
+		// cfthread scope — joined threads aggregated for `cfthread.NAME` access
+		try {
+			String[] threadNames = pageContext.getThreadScopeNames();
+			if ( threadNames != null && threadNames.length > 0 ) {
+				Map<String, Object> cfthread = new LinkedHashMap<>();
+				for ( String name : threadNames ) {
+					Object ts = pageContext.getThreadScope( KeyImpl.init( name ) );
+					if ( ts != null ) cfthread.put( name, ts );
+				}
+				if ( !cfthread.isEmpty() ) {
+					checkedPutScopeRef( "cfthread", cfthread );
+				}
+			}
+		} catch ( Throwable e ) { /* scope not available */ }
+
+		// applicationContext + systemMetrics — lazy: BIFs run only when the user
+		// expands the scope, never on every stop. Snapshot taken at expand-time
+		// so runtime-modified settings between suspend and expand are reflected.
+		final PageContext pcForLazy = pageContext;
+		registerLazyBifScope( "applicationContext", pcForLazy, "getApplicationSettings" );
+		registerLazyBifScope( "systemMetrics", pcForLazy, "getSystemMetrics" );
 
 		// Try to get 'this' scope from variables if it's a ComponentScope
 		try {
