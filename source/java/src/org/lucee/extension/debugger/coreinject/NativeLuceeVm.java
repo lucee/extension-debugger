@@ -81,10 +81,6 @@ public class NativeLuceeVm implements ILuceeVm {
 	public NativeLuceeVm(Config config) {
 		this.config_ = config;
 
-		// Let the value bridge resolve frameId → PageContext for getMetaData() lookups
-		// when rendering component variable groups.
-		CfValueDebuggerBridge.registerPageContextResolver(this::resolvePageContextForFrameId);
-
 		// Enable native mode
 		NativeDebuggerListener.setNativeMode(true);
 
@@ -346,10 +342,13 @@ public class NativeLuceeVm implements ILuceeVm {
 			return new IDebugEntity[0];
 		}
 		Object obj = maybeObj.get().obj;
-		// Get the parent's path and frameId for setVariable support
+		// Get the parent's path and frameId for setVariable support, plus the
+		// frame's PageContext so the bridge can call getMetaData when expanding
+		// a Component without needing a static resolver.
 		String parentPath = valTracker.getPath(variablesReference);
 		Long frameId = valTracker.getFrameId(variablesReference);
-		return CfValueDebuggerBridge.getAsDebugEntity(valTracker, obj, which, parentPath, frameId);
+		PageContext pc = (frameId != null) ? resolvePageContextForFrameId(frameId) : null;
+		return CfValueDebuggerBridge.getAsDebugEntity(valTracker, obj, which, parentPath, frameId, pc);
 	}
 
 	// ========== Breakpoint operations ==========

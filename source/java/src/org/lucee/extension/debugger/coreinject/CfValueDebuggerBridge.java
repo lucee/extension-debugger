@@ -83,26 +83,6 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         }
     }
 
-    // Resolves a DAP frameId → PageContext. Registered by the mode-specific VM
-    // (NativeLuceeVm / LuceeVm) at startup. Used for getMetaData() lookups.
-    private static volatile java.util.function.Function<Long, PageContext> pcResolver;
-
-    public static void registerPageContextResolver(java.util.function.Function<Long, PageContext> resolver) {
-        pcResolver = resolver;
-    }
-
-    private static PageContext resolvePc(Long frameId) {
-        if (frameId == null) return null;
-        java.util.function.Function<Long, PageContext> r = pcResolver;
-        if (r == null) return null;
-        try {
-            return r.apply(frameId);
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
-
     /**
      * @maybeNull_which --> null means "any type"
      */
@@ -122,7 +102,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
      * @param parentPath The variable path of the parent (e.g., "local.foo"), or null if not tracked
      */
     public static IDebugEntity[] getAsDebugEntity(ValTracker valTracker, Object obj, IDebugEntity.DebugEntityType maybeNull_which, String parentPath) {
-        return getAsDebugEntity(valTracker, obj, maybeNull_which, parentPath, null);
+        return getAsDebugEntity(valTracker, obj, maybeNull_which, parentPath, null, null);
     }
 
     /**
@@ -132,8 +112,9 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
      * @param maybeNull_which Filter for named/indexed variables, or null for all
      * @param parentPath The variable path of the parent (e.g., "local.foo"), or null if not tracked
      * @param frameId The frame ID for setVariable support, or null if not tracked
+     * @param pc The frame's PageContext for getMetaData lookups when expanding a Component, or null
      */
-    public static IDebugEntity[] getAsDebugEntity(ValTracker valTracker, Object obj, IDebugEntity.DebugEntityType maybeNull_which, String parentPath, Long frameId) {
+    public static IDebugEntity[] getAsDebugEntity(ValTracker valTracker, Object obj, IDebugEntity.DebugEntityType maybeNull_which, String parentPath, Long frameId, PageContext pc) {
         final boolean namedOK = maybeNull_which == null || maybeNull_which == IDebugEntity.DebugEntityType.NAMED;
         final boolean indexedOK = maybeNull_which == null || maybeNull_which == IDebugEntity.DebugEntityType.INDEXED;
 
@@ -148,7 +129,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         }
         else if (obj instanceof Map && namedOK) {
             if (obj instanceof Component) {
-                List<IDebugEntity> entries = buildComponentGroupEntries(valTracker, (Component) obj, parentPath, frameId);
+                List<IDebugEntity> entries = buildComponentGroupEntries(valTracker, (Component) obj, parentPath, frameId, pc);
                 return entries.toArray(new IDebugEntity[0]);
             }
             else {
@@ -203,11 +184,11 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
 
     /**
      * Build the named-variable sub-groups shown when a Component is expanded:
-     * this / variables / static / functions / accessors. Empty groups are omitted.
-     * functions/accessors are sourced from cfc.getMetaData(pc); accessors are
-     * derived from `properties` because auto-generated UDFs aren't in metadata.functions.
+     * this / variables / static / functions / accessors. Empty groups omitted.
+     * functions/accessors are sourced from cfc.getMetaData(pc); when pc is null
+     * (agent mode, or any caller without a frame) those two groups stay empty.
      */
-    private static List<IDebugEntity> buildComponentGroupEntries(ValTracker valTracker, Component cfc, String parentPath, Long frameId) {
+    private static List<IDebugEntity> buildComponentGroupEntries(ValTracker valTracker, Component cfc, String parentPath, Long frameId, PageContext pc) {
         List<IDebugEntity> entries = new ArrayList<>();
 
         // All three scope-shaped sub-groups (this/variables/static) use treatAsScopes=true
@@ -227,7 +208,6 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         if (staticScope instanceof Map && !((Map<?,?>) staticScope).isEmpty()) {
             entries.add(maybeNull_asValue(valTracker, "static", staticScope, true, true, parentPath, frameId));
         }
-        PageContext pc = resolvePc(frameId);
         IDebugEntity[] fnEntries = ComponentSignatures.buildFunctionEntries(cfc, pc);
         if (fnEntries.length > 0) {
             entries.add(buildPreBuiltGroupEntry(valTracker, "functions", fnEntries, parentPath, frameId));
