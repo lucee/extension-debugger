@@ -2,9 +2,13 @@ package org.lucee.extension.debugger.coreinject;
 
 import java.lang.ref.Cleaner;
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -34,6 +38,9 @@ public class ValTracker {
      * Used by setVariable to get the correct PageContext.
      */
     private final Map<Long, Long> frameIdById = new ConcurrentHashMap<>();
+
+    // Per-frame strong pins. No TTL, no LRU. Cleared on frame eviction.
+    private final Map<Long, List<Object>> pinsByFrameId = new ConcurrentHashMap<>();
 
     private static class WeakTaggedObject {
         // Start at 1, not 0 - DAP uses variablesReference=0 to mean "no children"
@@ -208,6 +215,24 @@ public class ValTracker {
      */
     public Long getFrameId(long id) {
         return frameIdById.get(id);
+    }
+
+    public void pinToFrame(long frameId, Object obj) {
+        if (obj == null) return;
+        pinsByFrameId.computeIfAbsent(frameId, k -> Collections.synchronizedList(new ArrayList<>())).add(obj);
+    }
+
+    public void clearPinsForFrame(long frameId) {
+        pinsByFrameId.remove(frameId);
+    }
+
+    public void clearAllPins() {
+        pinsByFrameId.clear();
+    }
+
+    // Live weakly-consistent view; safe to iterate during concurrent clearPinsForFrame.
+    public Set<Long> getPinnedFrameIds() {
+        return pinsByFrameId.keySet();
     }
 
     /**

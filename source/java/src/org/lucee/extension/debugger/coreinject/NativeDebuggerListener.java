@@ -10,6 +10,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -92,6 +93,10 @@ public class NativeDebuggerListener {
 	 * Note: We use PageContext (loader interface) not PageContextImpl to avoid class loading cycles.
 	 */
 	private static final ConcurrentHashMap<Long, WeakReference<PageContext>> nativelySuspendedThreads = new ConcurrentHashMap<>();
+
+	// Monotonic suspend-order tag per thread; highest live value = most recent.
+	private static final AtomicLong suspendOrderCounter = new AtomicLong(0);
+	private static final ConcurrentHashMap<Long, Long> suspendOrderByThreadId = new ConcurrentHashMap<>();
 
 	/**
 	 * Suspend location info for threads (file and line where suspended).
@@ -526,17 +531,17 @@ public class NativeDebuggerListener {
 		return pc;
 	}
 
-	/**
-	 * Get a PageContext from any currently-suspended thread. Used by DAP-custom
-	 * requests (getApplicationSettings) that need a live request PC but don't
-	 * carry a threadId. Returns null if no thread is suspended.
-	 */
-	public static PageContext getAnySuspendedPageContext() {
-		for (WeakReference<PageContext> ref : nativelySuspendedThreads.values()) {
-			PageContext pc = ref.get();
-			if (pc != null) return pc;
+	// Most recently suspended thread id, or null if none suspended.
+	public static Long getMostRecentlySuspendedThreadId() {
+		long bestOrder = -1;
+		Long bestThreadId = null;
+		for (var entry : suspendOrderByThreadId.entrySet()) {
+			if (entry.getValue() > bestOrder) {
+				bestOrder = entry.getValue();
+				bestThreadId = entry.getKey();
+			}
 		}
-		return null;
+		return bestThreadId;
 	}
 
 	/**
@@ -717,6 +722,7 @@ public class NativeDebuggerListener {
 		// Track the suspended thread so we can resume it later
 		// We store PageContext (not PageContextImpl) to avoid class loading cycles
 		nativelySuspendedThreads.put(threadId, new WeakReference<>(pc));
+		suspendOrderByThreadId.put(threadId, suspendOrderCounter.incrementAndGet());
 		Log.debug("onSuspend: added thread " + threadId + " to map, map=" + nativelySuspendedThreads.keySet());
 
 		// Store suspend location for stack trace (needed when no native DebuggerFrames exist)
@@ -766,6 +772,7 @@ public class NativeDebuggerListener {
 
 		// Remove from suspended threads map and location
 		nativelySuspendedThreads.remove(threadId);
+		suspendOrderByThreadId.remove(threadId);
 		suspendLocations.remove(threadId);
 	}
 

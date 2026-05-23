@@ -232,7 +232,7 @@ public class NativeDebugFrame implements IDebugFrame {
 				return null;
 			}
 		} );
-		CfValueDebuggerBridge.pin( lazy );
+		CfValueDebuggerBridge.pinForFrameOrFallback( valTracker, id, lazy );
 		var bridge = new CfValueDebuggerBridge( valTracker, lazy );
 		valTracker.setPath( bridge.id, name );
 		valTracker.setFrameId( bridge.id, id );
@@ -242,7 +242,7 @@ public class NativeDebugFrame implements IDebugFrame {
 	private void checkedPutScopeRef( String name, Object scope ) {
 		if ( scope != null && scope instanceof Map ) {
 			var v = new MarkerTrait.Scope( (Map<?, ?>) scope );
-			CfValueDebuggerBridge.pin( v );
+			CfValueDebuggerBridge.pinForFrameOrFallback( valTracker, id, v );
 			var bridge = new CfValueDebuggerBridge( valTracker, v );
 			// Track the path for setVariable support - scope name is the root path
 			valTracker.setPath( bridge.id, name );
@@ -366,10 +366,8 @@ public class NativeDebugFrame implements IDebugFrame {
 		exception.printStackTrace( new PrintWriter( sw ) );
 		cfcatch.put( "stackTrace", sw.toString() );
 
-		// Add as scope - pin both the wrapper and the inner map to prevent GC
 		var v = new MarkerTrait.Scope( cfcatch );
-		CfValueDebuggerBridge.pin( cfcatch );
-		CfValueDebuggerBridge.pin( v );
+		CfValueDebuggerBridge.pinForFrameOrFallback( valTracker, id, v );
 		var bridge = new CfValueDebuggerBridge( valTracker, v );
 		// Track the path for setVariable support
 		valTracker.setPath( bridge.id, "cfcatch" );

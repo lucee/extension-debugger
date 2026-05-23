@@ -21,15 +21,24 @@ import org.lucee.extension.debugger.IDebugEntity;
 import org.lucee.extension.debugger.coreinject.frame.Frame;
 
 public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
-    // Pin some ephemeral evaluated things so they don't get GC'd immediately.
-    // It would be better to pin them to a "session" or something with a meaningful lifetime,
-    // rather than hope they live long enough in this cache to be useful.
-    // Most objects do not require being pinned here -- objects that require pinning are those we synthetically create
-    // while generating debug info, like when we wrap a CFC in a MarkerTrait.Scope, or create an array out of a Query object.
+    // Legacy global LRU — agent-mode fallback when no frameId is plumbed.
     private static final ExpiringLruCache<Integer, Object> pinnedObjects =
         new ExpiringLruCache<>(50, 10, TimeUnit.MINUTES);
     public static void pin(Object obj) {
         pinnedObjects.put(System.identityHashCode(obj), obj);
+    }
+
+    /**
+     * Strongly pin a synthetic debug wrapper for the lifetime of a frame. When
+     * frameId is null (agent mode), falls through to the legacy LRU so agent
+     * behaviour is unchanged.
+     */
+    public static void pinForFrameOrFallback(ValTracker valTracker, Long frameId, Object obj) {
+        if (frameId != null) {
+            valTracker.pinToFrame(frameId, obj);
+        } else {
+            pin(obj);
+        }
     }
 
     private final Frame frame;
@@ -256,7 +265,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
 
     private static IDebugEntity buildFilteredScopeEntry(ValTracker valTracker, String name, Map<?,?> scopelike, java.util.Set<String> ignoreKeys, String parentPath, Long frameId) {
         MarkerTrait.Scope marker = new MarkerTrait.Scope(scopelike, ignoreKeys);
-        pin(marker);
+        pinForFrameOrFallback(valTracker, frameId, marker);
         DebugEntity val = new DebugEntity();
         val.name = name;
         int count = 0;
@@ -278,9 +287,9 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         val.value = "{} (" + entries.length + " members)";
         val.namedVariables = entries.length;
         String childPath = (parentPath != null) ? parentPath + "." + name : null;
-        val.variablesReference = valTracker.registerObjectWithPathAndFrameId(
-            new MarkerTrait.PreBuiltGroup(entries), childPath, frameId
-        ).id;
+        MarkerTrait.PreBuiltGroup group = new MarkerTrait.PreBuiltGroup(entries);
+        pinForFrameOrFallback(valTracker, frameId, group);
+        val.variablesReference = valTracker.registerObjectWithPathAndFrameId(group, childPath, frameId).id;
         return val;
     }
 
@@ -417,7 +426,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
                 int size = (int) sizeMethod.invoke(queryAsArrayOfStructs);
                 val.value = "Query (" + size + " rows)";
 
-                pin(queryAsArrayOfStructs);
+                pinForFrameOrFallback(valTracker, frameId, queryAsArrayOfStructs);
 
                 val.variablesReference = valTracker.registerObjectWithPathAndFrameId(queryAsArrayOfStructs, childPath, frameId).id;
             }
@@ -442,7 +451,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
                     if (obj instanceof ComponentScopeMarkerTraitShim) {
                         ((ComponentScopeMarkerTraitShim)obj).__luceedebug__pinComponentScopeMarkerTrait(v);
                     } else {
-                        pin(v);
+                        pinForFrameOrFallback(valTracker, frameId, v);
                     }
                     // wrap expands flat via the Scope branch — count non-noisy public members
                     val.namedVariables = countNonNoisy((Map<?,?>) obj);
