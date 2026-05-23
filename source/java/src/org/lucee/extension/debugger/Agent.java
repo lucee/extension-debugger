@@ -165,6 +165,9 @@ public class Agent {
             result.put("org.lucee.extension.debugger.coreinject.ValTracker", 0);
             result.put("org.lucee.extension.debugger.coreinject.UnsafeUtils", 0);
             result.put("org.lucee.extension.debugger.coreinject.CfValueDebuggerBridge$MarkerTrait$Scope", 0);
+            result.put("org.lucee.extension.debugger.coreinject.CfValueDebuggerBridge$MarkerTrait$PreBuiltGroup", 0);
+            result.put("org.lucee.extension.debugger.coreinject.CfValueDebuggerBridge$MarkerTrait$LazyMap", 0);
+            result.put("org.lucee.extension.debugger.coreinject.ComponentSignatures", 0);
             result.put("org.lucee.extension.debugger.coreinject.DebugManager$PageContextAndOutputStream", 0);
             result.put("org.lucee.extension.debugger.coreinject.LuceeVm$ThreadMap", 0);
             result.put("org.lucee.extension.debugger.coreinject.DebugManager", 0);
