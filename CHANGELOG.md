@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.0.0.8-SNAPSHOT] - 2026-05-22
+
+### Fixed
+
+- **[LDEV-6339](https://luceeserver.atlassian.net/browse/LDEV-6339)**: native-mode debugger polish:
+  - Variables panel no longer ClassCastExceptions when expanding a Component — only agent-mode `ComponentImpl` has `ComponentScopeMarkerTraitShim` mixed in via bytecode; the native cast is now gated by `instanceof`
+  - Variables panel honours VSCode's `start`/`count` pagination request and reports `indexedVariables`/`namedVariables` so large arrays and structs are chunked instead of streamed in one shot
+  - Debug console accepts expressions without a selected frame — evaluates against any suspended `PageContext` instead of returning "missing frameID"
+  - Expanding a Component now splits into `this` / `variables` / `static` / `functions` / `accessors` sub-groups (empty groups omitted); the `functions` and `accessors` groups render full signatures derived from `getMetaData(cfc)` (auto-generated accessors derived from the property declaration)
+  - Variables panel exposes additional scopes: `cookie`, `cfthread`, `applicationContext`, `systemMetrics`
+- **[LDEV-6337](https://luceeserver.atlassian.net/browse/LDEV-6337)**: Variables panel now shows the right `variables` scope on top-level CFM pages (was missing entirely) and inside custom-tag bodies (was leaking the caller's scope). Core fix on the INCLUDE debugger frame; covered by new specs for top-level CFM, cfmodule, and top-level exception-suspend.
+
+### Changed
+
+- Minimum Lucee core version raised to **7.1.0.134**
+
 ## [3.0.0.7-SNAPSHOT] - 2026-05-21
 
 ### Fixed
