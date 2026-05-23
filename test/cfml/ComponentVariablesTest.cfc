@@ -228,6 +228,73 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 				cleanupThread( threadId );
 			}, skip=!isNativeMode() );
 
+			it( title="variables sub-group expands flat (no recursive sub-grouping)", body=function() {
+				dap.setBreakpoints( variables.richTargetFile, [ lines.debugLine ] );
+				triggerArtifact( "rich-component-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+
+				var frame = getTopFrame( threadId );
+				var richComponent = getVariableByName( getScopeByName( frame.id, "Local" ).variablesReference, "richComponent" );
+				var variablesGroup = getVariableByName( richComponent.variablesReference, "variables" );
+
+				var members = dap.getVariables( variablesGroup.variablesReference ).body.variables;
+				var memberNames = members.map( function( v ) { return v.name; } );
+
+				// flat expansion: should contain real keys, NOT synthetic sub-group names
+				expect( memberNames ).toInclude( "privateData", "variables sub-group should expose `privateData` (init() assignment). Got: #serializeJSON( memberNames )#" );
+				expect( memberNames ).notToInclude( "functions", "variables sub-group must NOT recursively render the `functions` sub-group" );
+				expect( memberNames ).notToInclude( "accessors", "variables sub-group must NOT recursively render the `accessors` sub-group" );
+				expect( memberNames ).notToInclude( "static", "variables sub-group must NOT recursively render the `static` sub-group" );
+
+				cleanupThread( threadId );
+			}, skip=!isNativeMode() );
+
+			it( title="variables sub-group hides the redundant `this` self-ref key", body=function() {
+				dap.setBreakpoints( variables.richTargetFile, [ lines.debugLine ] );
+				triggerArtifact( "rich-component-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+
+				var frame = getTopFrame( threadId );
+				var richComponent = getVariableByName( getScopeByName( frame.id, "Local" ).variablesReference, "richComponent" );
+				var variablesGroup = getVariableByName( richComponent.variablesReference, "variables" );
+
+				var members = dap.getVariables( variablesGroup.variablesReference ).body.variables;
+				var memberNames = members.map( function( v ) { return uCase( v.name ); } );
+
+				// Lucee's variables scope contains a `this` self-ref. Without filtering it,
+				// expanding variables opens this → variables → this → ... ad infinitum.
+				// Filter keeps real data members; user reaches `this` via the cfc's own `this` sub-group.
+				expect( memberNames ).notToInclude( "THIS", "variables sub-group must hide the self-referencing `this` key. Got: #serializeJSON( memberNames )#" );
+				expect( memberNames ).toInclude( "PRIVATEDATA", "variables sub-group should still expose real data (privateData)" );
+
+				cleanupThread( threadId );
+			}, skip=!isNativeMode() );
+
+			it( title="static sub-group expands flat (no recursive sub-grouping)", body=function() {
+				dap.setBreakpoints( variables.richTargetFile, [ lines.debugLine ] );
+				triggerArtifact( "rich-component-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+
+				var frame = getTopFrame( threadId );
+				var richComponent = getVariableByName( getScopeByName( frame.id, "Local" ).variablesReference, "richComponent" );
+				var staticGroup = getVariableByName( richComponent.variablesReference, "static" );
+
+				var members = dap.getVariables( staticGroup.variablesReference ).body.variables;
+				var memberNames = members.map( function( v ) { return v.name; } );
+
+				expect( memberNames ).toInclude( "staticCounter", "static sub-group should expose `staticCounter`. Got: #serializeJSON( memberNames )#" );
+				expect( memberNames ).notToInclude( "functions", "static sub-group must NOT recursively render the `functions` sub-group" );
+				expect( memberNames ).notToInclude( "accessors", "static sub-group must NOT recursively render the `accessors` sub-group" );
+
+				cleanupThread( threadId );
+			}, skip=!isNativeMode() );
+
 			it( title="function signature renders required vs optional args distinctly", body=function() {
 				dap.setBreakpoints( variables.richTargetFile, [ lines.debugLine ] );
 				triggerArtifact( "rich-component-target.cfm" );

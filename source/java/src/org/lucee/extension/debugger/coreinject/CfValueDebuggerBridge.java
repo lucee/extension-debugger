@@ -62,8 +62,15 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
     public static class MarkerTrait {
         public static class Scope {
             public final Map<?,?> scopelike;
+            // Case-insensitive set of keys to skip when iterating. Used to hide
+            // Lucee's redundant `this`-self-ref inside the variables scope.
+            public final java.util.Set<String> ignoreKeys;
             public Scope(Map<?,?> scopelike) {
+                this(scopelike, java.util.Collections.emptySet());
+            }
+            public Scope(Map<?,?> scopelike, java.util.Set<String> ignoreKeys) {
                 this.scopelike = scopelike;
+                this.ignoreKeys = ignoreKeys;
             }
         }
         // Holds pre-built debug entries (e.g. function signatures derived from getMetaData).
@@ -137,7 +144,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
             MarkerTrait.Scope scope = (MarkerTrait.Scope) obj;
             @SuppressWarnings("unchecked")
             var m = (Map<String, Object>)(scope.scopelike);
-            return getAsMaplike(valTracker, m, parentPath, frameId);
+            return getAsMaplike(valTracker, m, true, scope.ignoreKeys, parentPath, frameId);
         }
         else if (obj instanceof Map && namedOK) {
             if (obj instanceof Component) {
@@ -203,16 +210,22 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
     private static List<IDebugEntity> buildComponentGroupEntries(ValTracker valTracker, Component cfc, String parentPath, Long frameId) {
         List<IDebugEntity> entries = new ArrayList<>();
 
+        // All three scope-shaped sub-groups (this/variables/static) use treatAsScopes=true
+        // so their expansion is flat-maplike. Without it, ComponentScope/StaticScope
+        // (both `instanceof Component`) recursively re-trigger sub-group rendering.
         if (hasNonNoisyEntries((Map<?,?>) cfc)) {
             entries.add(maybeNull_asValue(valTracker, "this", cfc, true, true, parentPath, frameId));
         }
         Object varsScope = cfc.getComponentScope();
         if (varsScope instanceof Map && hasNonNoisyEntries((Map<?,?>) varsScope)) {
-            entries.add(maybeNull_asValue(valTracker, "variables", varsScope, parentPath, frameId));
+            // `this` is hidden inside variables — Lucee stores a self-ref under that key,
+            // which otherwise opens variables → this → variables → ... in an infinite click chain.
+            // The cfc's own `this` sub-group at this level is the proper access point.
+            entries.add(buildFilteredScopeEntry(valTracker, "variables", (Map<?,?>) varsScope, java.util.Set.of("this"), parentPath, frameId));
         }
         Object staticScope = cfc.staticScope();
         if (staticScope instanceof Map && !((Map<?,?>) staticScope).isEmpty()) {
-            entries.add(maybeNull_asValue(valTracker, "static", staticScope, parentPath, frameId));
+            entries.add(maybeNull_asValue(valTracker, "static", staticScope, true, true, parentPath, frameId));
         }
         PageContext pc = resolvePc(frameId);
         IDebugEntity[] fnEntries = ComponentSignatures.buildFunctionEntries(cfc, pc);
@@ -258,6 +271,24 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         return n;
     }
 
+    private static IDebugEntity buildFilteredScopeEntry(ValTracker valTracker, String name, Map<?,?> scopelike, java.util.Set<String> ignoreKeys, String parentPath, Long frameId) {
+        MarkerTrait.Scope marker = new MarkerTrait.Scope(scopelike, ignoreKeys);
+        pin(marker);
+        DebugEntity val = new DebugEntity();
+        val.name = name;
+        int count = 0;
+        for (Map.Entry<?, ?> e : scopelike.entrySet()) {
+            if (containsIgnoreCase(ignoreKeys, String.valueOf(e.getKey()))) continue;
+            Object v = e.getValue();
+            if (v == null || !isNoisyComponentFunction(v)) count++;
+        }
+        val.value = "{} (" + count + " members)";
+        val.namedVariables = count;
+        String childPath = (parentPath != null) ? parentPath + "." + name : null;
+        val.variablesReference = valTracker.registerObjectWithPathAndFrameId(marker, childPath, frameId).id;
+        return val;
+    }
+
     private static IDebugEntity buildPreBuiltGroupEntry(ValTracker valTracker, String name, IDebugEntity[] entries, String parentPath, Long frameId) {
         DebugEntity val = new DebugEntity();
         val.name = name;
@@ -271,15 +302,16 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
     }
 
     private static IDebugEntity[] getAsMaplike(ValTracker valTracker, Map<String, Object> map, String parentPath, Long frameId) {
-        return getAsMaplike(valTracker, map, true, parentPath, frameId);
+        return getAsMaplike(valTracker, map, true, java.util.Collections.emptySet(), parentPath, frameId);
     }
 
-    private static IDebugEntity[] getAsMaplike(ValTracker valTracker, Map<String, Object> map, boolean skipNoisyComponentFunctions, String parentPath, Long frameId) {
+    private static IDebugEntity[] getAsMaplike(ValTracker valTracker, Map<String, Object> map, boolean skipNoisyComponentFunctions, java.util.Set<String> ignoreKeys, String parentPath, Long frameId) {
         ArrayList<IDebugEntity> results = new ArrayList<>();
 
         Set<Map.Entry<String,Object>> entries = map.entrySet();
 
         for (Map.Entry<String, Object> entry : entries) {
+            if (!ignoreKeys.isEmpty() && containsIgnoreCase(ignoreKeys, entry.getKey())) continue;
             IDebugEntity val = maybeNull_asValue(valTracker, entry.getKey(), entry.getValue(), skipNoisyComponentFunctions, false, parentPath, frameId);
             if (val != null) {
                 results.add(val);
@@ -296,6 +328,14 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         results.sort(xscopeByName);
 
         return results.toArray(new IDebugEntity[results.size()]);
+    }
+
+    private static boolean containsIgnoreCase(java.util.Set<String> set, String key) {
+        if (set == null || set.isEmpty()) return false;
+        for (String s : set) {
+            if (s.equalsIgnoreCase(key)) return true;
+        }
+        return false;
     }
 
     private static IDebugEntity[] getAsCfArray(ValTracker valTracker, Array array, String parentPath, Long frameId) {
@@ -401,7 +441,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
             catch (Throwable e) {
                 // Fall back to generic display
                 try {
-                    val.value = obj.getClass().toString();
+                    val.value = obj.toString();
                     val.variablesReference = valTracker.registerObjectWithPathAndFrameId(obj, childPath, frameId).id;
                 }
                 catch (Throwable x) {
@@ -440,7 +480,7 @@ public class CfValueDebuggerBridge implements ICfValueDebuggerBridge {
         }
         else {
             try {
-                val.value = obj.getClass().toString();
+                val.value = obj.toString();
                 val.variablesReference = valTracker.registerObjectWithPathAndFrameId(obj, childPath, frameId).id;
             }
             catch (Throwable x) {
