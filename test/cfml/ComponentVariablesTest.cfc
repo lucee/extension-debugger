@@ -22,8 +22,9 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 	include "DapTestCase.cfm";
 
 	variables.targetFile = "";
+	variables.richTargetFile = "";
 
-	// Line numbers in artifacts/metadata-component-target.cfm — keep in sync.
+	// Line numbers in artifacts/*-component-target.cfm — keep in sync.
 	variables.lines = {
 		debugLine: 9 // var debugLine = "inspect here";
 	};
@@ -31,6 +32,7 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 	function beforeAll() {
 		setupDap();
 		variables.targetFile = getArtifactPath( "metadata-component-target.cfm" );
+		variables.richTargetFile = getArtifactPath( "rich-component-target.cfm" );
 	}
 
 	function run( testResults, testBox ) {
@@ -131,6 +133,122 @@ component extends="org.lucee.cfml.test.LuceeTestCase" labels="dap" {
 
 				var setter = getVariableByName( accessorsGroup.variablesReference, "setFoo" );
 				expect( setter.value ).toMatch( "function\s+setFoo\(required\s+string\s+foo\)", "setter signature should be `function setFoo(required string foo)`. Got: #setter.value#" );
+
+				cleanupThread( threadId );
+			}, skip=!isNativeMode() );
+
+			it( title="rich CFC: every sub-group is present and renders its members", body=function() {
+				dap.setBreakpoints( variables.richTargetFile, [ lines.debugLine ] );
+				triggerArtifact( "rich-component-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+
+				var frame = getTopFrame( threadId );
+				var richComponent = getVariableByName( getScopeByName( frame.id, "Local" ).variablesReference, "richComponent" );
+
+				var response = dap.getVariables( richComponent.variablesReference );
+				expect( response.success ).toBeTrue( "Rich CFC expansion must not error out" );
+
+				var entryNames = response.body.variables.map( function( v ) { return v.name; } );
+				expect( entryNames ).toInclude( "this", "RichComponent has `this.publicData` — `this` should be present. Got: #serializeJSON( entryNames )#" );
+				expect( entryNames ).toInclude( "variables", "RichComponent assigns to `variables` scope — should be present" );
+				expect( entryNames ).toInclude( "static", "RichComponent has a non-empty `static {}` block — should be present" );
+				expect( entryNames ).toInclude( "functions", "RichComponent declares public/private/package methods — `functions` should be present" );
+				expect( entryNames ).toInclude( "accessors", "RichComponent has accessor properties — `accessors` should be present" );
+
+				// static scope: members from the `static {}` block
+				var staticGroup = getVariableByName( richComponent.variablesReference, "static" );
+				var staticMemberNames = dap.getVariables( staticGroup.variablesReference ).body.variables.map( function( v ) { return v.name; } );
+				expect( staticMemberNames ).toInclude( "staticCounter", "static group should expose `staticCounter`. Got: #serializeJSON( staticMemberNames )#" );
+				expect( staticMemberNames ).toInclude( "staticLabel", "static group should expose `staticLabel`" );
+
+				// this scope: non-UDF members assigned in init()
+				var thisGroup = getVariableByName( richComponent.variablesReference, "this" );
+				var thisMemberNames = dap.getVariables( thisGroup.variablesReference ).body.variables.map( function( v ) { return v.name; } );
+				expect( thisMemberNames ).toInclude( "publicData", "this group should expose `publicData`. Got: #serializeJSON( thisMemberNames )#" );
+
+				// variables scope: members assigned via `variables.privateData = ...`
+				var variablesGroup = getVariableByName( richComponent.variablesReference, "variables" );
+				var variablesMemberNames = dap.getVariables( variablesGroup.variablesReference ).body.variables.map( function( v ) { return v.name; } );
+				expect( variablesMemberNames ).toInclude( "privateData", "variables group should expose `privateData`. Got: #serializeJSON( variablesMemberNames )#" );
+
+				cleanupThread( threadId );
+			}, skip=!isNativeMode() );
+
+			it( title="accessors group honours per-property getter=false / setter=false overrides", body=function() {
+				dap.setBreakpoints( variables.richTargetFile, [ lines.debugLine ] );
+				triggerArtifact( "rich-component-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+
+				var frame = getTopFrame( threadId );
+				var richComponent = getVariableByName( getScopeByName( frame.id, "Local" ).variablesReference, "richComponent" );
+				var accessorsGroup = getVariableByName( richComponent.variablesReference, "accessors" );
+
+				var memberNames = dap.getVariables( accessorsGroup.variablesReference ).body.variables.map( function( v ) { return v.name; } );
+
+				// alpha: default — both getter and setter
+				expect( memberNames ).toInclude( "getAlpha", "alpha should have a getter. Got: #serializeJSON( memberNames )#" );
+				expect( memberNames ).toInclude( "setAlpha", "alpha should have a setter" );
+
+				// beta: getter="false" — only setter
+				expect( memberNames ).notToInclude( "getBeta", "beta declared getter='false' — no getter expected" );
+				expect( memberNames ).toInclude( "setBeta", "beta should still expose a setter" );
+
+				// gamma: setter="false" — only getter
+				expect( memberNames ).toInclude( "getGamma", "gamma should still expose a getter" );
+				expect( memberNames ).notToInclude( "setGamma", "gamma declared setter='false' — no setter expected" );
+
+				cleanupThread( threadId );
+			}, skip=!isNativeMode() );
+
+			it( title="functions group renders private and package access modifiers in the signature", body=function() {
+				dap.setBreakpoints( variables.richTargetFile, [ lines.debugLine ] );
+				triggerArtifact( "rich-component-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+
+				var frame = getTopFrame( threadId );
+				var richComponent = getVariableByName( getScopeByName( frame.id, "Local" ).variablesReference, "richComponent" );
+				var functionsGroup = getVariableByName( richComponent.variablesReference, "functions" );
+
+				var helper = getVariableByName( functionsGroup.variablesReference, "helper" );
+				expect( helper.value ).toMatch( "^private\s+function\s+helper\(", "private modifier should prefix the signature. Got: #helper.value#" );
+
+				var pkgFn = getVariableByName( functionsGroup.variablesReference, "pkgFn" );
+				expect( pkgFn.value ).toMatch( "^package\s+function\s+pkgFn\(", "package modifier should prefix the signature. Got: #pkgFn.value#" );
+
+				// Public is the default — should NOT be prefixed
+				var doStuff = getVariableByName( functionsGroup.variablesReference, "doStuff" );
+				expect( doStuff.value ).notToMatch( "^public\s+function", "public is the default — no `public` prefix expected. Got: #doStuff.value#" );
+
+				cleanupThread( threadId );
+			}, skip=!isNativeMode() );
+
+			it( title="function signature renders required vs optional args distinctly", body=function() {
+				dap.setBreakpoints( variables.richTargetFile, [ lines.debugLine ] );
+				triggerArtifact( "rich-component-target.cfm" );
+
+				var stopped = dap.waitForEvent( "stopped", 2000 );
+				var threadId = stopped.body.threadId;
+
+				var frame = getTopFrame( threadId );
+				var richComponent = getVariableByName( getScopeByName( frame.id, "Local" ).variablesReference, "richComponent" );
+				var functionsGroup = getVariableByName( richComponent.variablesReference, "functions" );
+				var doStuff = getVariableByName( functionsGroup.variablesReference, "doStuff" );
+
+				// required string name → "required string name"
+				expect( doStuff.value ).toMatch( "required\s+string\s+name", "required arg should be prefixed `required`. Got: #doStuff.value#" );
+
+				// numeric count=1 (optional) → "numeric count" — no `required` prefix
+				expect( doStuff.value ).toMatch( "numeric\s+count(?!\s*=)", "optional arg should NOT be prefixed `required`. Got: #doStuff.value#" );
+				expect( doStuff.value ).notToMatch( "required\s+numeric\s+count", "optional arg should NOT be marked required" );
+
+				// boolean flag (optional, no default) → "boolean flag" — no `required` prefix
+				expect( doStuff.value ).notToMatch( "required\s+boolean\s+flag", "optional arg without default should NOT be marked required" );
 
 				cleanupThread( threadId );
 			}, skip=!isNativeMode() );
