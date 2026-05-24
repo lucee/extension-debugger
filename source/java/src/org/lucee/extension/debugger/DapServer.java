@@ -440,10 +440,11 @@ public class DapServer implements IDebugProtocolServer {
         String luceeVersion = getLuceeVersion();
         Log.info("luceedebug " + Version.VERSION + " connected to Lucee " + luceeVersion);
 
-        // Validate secret from launch.json
-        if (!validateSecret(args)) {
+        // Validate secret from launch.json (returns null on success, else the error message)
+        String secretError = validateSecret(args);
+        if (secretError != null) {
             var result = new CompletableFuture<Void>();
-            var error = new ResponseError(ResponseErrorCode.InvalidRequest, "Invalid or missing secret", null);
+            var error = new ResponseError(ResponseErrorCode.InvalidRequest, secretError, null);
             result.completeExceptionally(new ResponseErrorException(error));
             return result;
         }
@@ -483,15 +484,16 @@ public class DapServer implements IDebugProtocolServer {
      * Works for both native mode (via ExtensionActivator) and agent mode (direct validation).
      *
      * @param args The attach arguments containing the secret
-     * @return true if secret is valid, false otherwise
+     * @return null on success; an error message string on failure (suitable for surfacing to the IDE)
      */
-    private boolean validateSecret(Map<String, Object> args) {
+    private String validateSecret(Map<String, Object> args) {
         Object secretObj = args.get("secret");
         String clientSecret = (secretObj instanceof String) ? ((String) secretObj).trim() : null;
 
         if (clientSecret == null || clientSecret.isEmpty()) {
-            Log.error("No secret provided in launch.json");
-            return false;
+            String msg = "No secret provided in launch.json";
+            Log.error(msg);
+            return msg;
         }
 
         // Try native mode first (Lucee 7.1+ extension)
@@ -505,39 +507,38 @@ public class DapServer implements IDebugProtocolServer {
             if (isNative) {
                 // We're in native mode - use ExtensionActivator to register
                 Method registerMethod = activatorClass.getMethod("registerListener", String.class);
-                Boolean registered = (Boolean) registerMethod.invoke(null, clientSecret);
-                if (registered) {
+                String reason = (String) registerMethod.invoke(null, clientSecret);
+                if (reason == null) {
                     secretValidated = true;
-                    return true;
-                } else {
-                    Log.error("Failed to register debugger - invalid secret");
-                    return false;
+                    return null;
                 }
+                Log.error("Failed to register debugger - " + reason);
+                return reason;
             }
             // Not in native mode, fall through to agent mode validation
         } catch (ClassNotFoundException e) {
             // Class not found - shouldn't happen with shadow JAR but fall through anyway
         } catch (Exception e) {
             Log.error("Error checking native mode status", e);
-            return false;
+            return "Error checking native mode status: " + e.getMessage();
         }
 
         // Agent mode - validate secret directly
         String expectedSecret = EnvUtil.getDebuggerSecret();
         if (expectedSecret == null) {
-            // No secret configured on server - allow any secret for backwards compatibility?
-            // No - require secret to be set for security
-            Log.error("LUCEE_DAP_SECRET not set on server");
-            return false;
+            String msg = "LUCEE_DAP_SECRET not set on server";
+            Log.error(msg);
+            return msg;
         }
 
         if (!expectedSecret.equals(clientSecret)) {
-            Log.error("Invalid secret");
-            return false;
+            String msg = "Invalid secret";
+            Log.error(msg);
+            return msg;
         }
 
         secretValidated = true;
-        return true;
+        return null;
     }
 
     /**

@@ -111,32 +111,35 @@ public class ExtensionActivator {
 	 * Secret is validated on every connection, not just the first one.
 	 *
 	 * @param secret The secret from launch.json
-	 * @return true if registration succeeded
+	 * @return null on success; an error message string on failure (suitable for surfacing to the IDE)
 	 */
-	public static synchronized boolean registerListener(String secret) {
+	public static synchronized String registerListener(String secret) {
 		if (luceeLoader == null || extensionLoader == null) {
-			Log.error("Cannot register listener - extension not initialized");
-			return false;
+			String msg = "Cannot register listener - extension not initialized";
+			Log.error(msg);
+			return msg;
 		}
 		if (secret == null || secret.trim().isEmpty()) {
-			Log.error("Cannot register listener - no secret provided");
-			return false;
+			String msg = "Cannot register listener - no secret provided";
+			Log.error(msg);
+			return msg;
 		}
 		// Always validate secret, even if already registered
 		String expectedSecret = EnvUtil.getDebuggerSecret();
 		if (expectedSecret == null || !expectedSecret.equals(secret.trim())) {
-			Log.error("Invalid secret");
-			return false;
+			String msg = "Invalid secret";
+			Log.error(msg);
+			return msg;
 		}
 		// Only register with Lucee once
 		if (!listenerRegistered) {
-			if (registerNativeDebuggerListener(luceeLoader, extensionLoader, secret.trim())) {
-				listenerRegistered = true;
-			} else {
-				return false;
+			String reason = registerNativeDebuggerListener(luceeLoader, extensionLoader, secret.trim());
+			if (reason != null) {
+				return reason;
 			}
+			listenerRegistered = true;
 		}
-		return true;
+		return null;
 	}
 
 	/**
@@ -239,8 +242,10 @@ public class ExtensionActivator {
 	 * DebuggerRegistry and DebuggerListener are in Lucee's core (luceeLoader).
 	 * NativeDebuggerListener is in our extension bundle (extensionLoader).
 	 * Requires the correct secret to register.
+	 *
+	 * @return null on success; an error message string on failure (suitable for surfacing to the IDE)
 	 */
-	private static boolean registerNativeDebuggerListener(ClassLoader luceeLoader, ClassLoader extensionLoader, String secret) {
+	private static String registerNativeDebuggerListener(ClassLoader luceeLoader, ClassLoader extensionLoader, String secret) {
 		try {
 			// Load Lucee core classes
 			Class<?> registryClass = luceeLoader.loadClass("lucee.runtime.debug.DebuggerRegistry");
@@ -274,6 +279,7 @@ public class ExtensionActivator {
 				(proxy, method, args) -> {
 					try {
 						switch (method.getName()) {
+							case "getApiVersion": return 1;
 							case "getName": return getNameMethod.invoke(null);
 							case "isClientConnected": return isDapClientConnectedMethod.invoke(null);
 							case "onSuspend": return onSuspendMethod.invoke(null, args);
@@ -295,26 +301,27 @@ public class ExtensionActivator {
 				}
 			);
 
-			// Register with Lucee (requires secret)
-			Method setListener = registryClass.getMethod("setListener", listenerInterface, String.class);
-			Boolean success = (Boolean) setListener.invoke(null, listenerProxy, secret);
+			// Register with Lucee (requires secret) - new String-returning API (null = OK, else reason)
+			Method register = registryClass.getMethod("register", listenerInterface, String.class);
+			String reason = (String) register.invoke(null, listenerProxy, secret);
 
-			if (success) {
+			if (reason == null) {
 				Log.info("Registered native debugger listener");
-				return true;
-			} else {
-				Log.error("Debugger registration rejected - secret mismatch");
-				return false;
+				return null;
 			}
+			Log.error("Debugger registration rejected - " + reason);
+			return reason;
 		} catch (ClassNotFoundException e) {
-			Log.info("DebuggerRegistry not found - requires Lucee 7.1+");
-			return false;
+			String msg = "DebuggerRegistry not found - requires Lucee 7.1+";
+			Log.info(msg);
+			return msg;
 		} catch (NoSuchMethodException e) {
-			Log.error("DebuggerRegistry.setListener(listener, secret) not found - requires updated Lucee 7.1+");
-			return false;
+			String msg = "DebuggerRegistry.register(listener, secret) not found - requires updated Lucee 7.1+";
+			Log.error(msg);
+			return msg;
 		} catch (Throwable e) {
 			Log.error("Failed to register listener", e);
-			return false;
+			return "Failed to register listener: " + e.getMessage();
 		}
 	}
 

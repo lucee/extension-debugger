@@ -19,7 +19,7 @@
 		<mvnArtifactId>debugger</mvnArtifactId>
 		<mvnVersion>${project.version}</mvnVersion>
 		<filename>debugger-extension</filename>
-		<luceeCoreVersion>7.1.0.134</luceeCoreVersion>
+		<luceeCoreVersion>7.1.0.136</luceeCoreVersion>
 		<releaseType>server</releaseType>
 		<label>Debugger Extension</label>
 		<camelname>Debugger</camelname>
