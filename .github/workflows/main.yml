@@ -203,7 +203,7 @@ jobs:
       # Set up Lucee Express for debuggee
       - name: Download Lucee Express template
         run: |
-          EXPRESS_URL=$(curl -s https://update.lucee.org/rest/update/provider/expressTemplates | jq -r '.["tomcat-11"]')
+          EXPRESS_URL=$(curl -fsSL https://github.com/lucee/lucee-installer/releases/download/express-templates/express-templates.json | jq -r '.["tomcat-11"]')
           echo "Downloading Express template from: $EXPRESS_URL"
           curl -L -o express-template.zip "$EXPRESS_URL"
           unzip -q express-template.zip -d debuggee
@@ -434,7 +434,7 @@ jobs:
 
       - name: Download Lucee Express template
         run: |
-          EXPRESS_URL=$(curl -s https://update.lucee.org/rest/update/provider/expressTemplates | jq -r '.["${{ matrix.tomcat }}"]')
+          EXPRESS_URL=$(curl -fsSL https://github.com/lucee/lucee-installer/releases/download/express-templates/express-templates.json | jq -r '.["${{ matrix.tomcat }}"]')
           echo "Downloading Express template from: $EXPRESS_URL"
           curl -L -o express-template.zip "$EXPRESS_URL"
           unzip -q express-template.zip -d debuggee
